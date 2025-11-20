@@ -6,4 +6,4 @@ python-dotenv==1.1.1
 pytz==2025.2
 grpcio==1.75.1
 grpcio-tools==1.75.1
-
+upstox-python-sdk
