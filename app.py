@@ -27,6 +27,7 @@ if 'logs' not in st.session_state:
     st.session_state.logs = []
 if 'log_queue' not in st.session_state:
     st.session_state.log_queue = queue.Queue()
+    
 
 # Custom print function to capture logs
 class LogCapture:
