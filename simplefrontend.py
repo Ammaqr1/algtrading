@@ -1,6 +1,8 @@
 import streamlit as st
 from google.protobuf.json_format import MessageToDict
 # import upstox_client
+from trading_strategy import TradingStrategy
+
 
 
 st.set_page_config(page_title="Simple Frontend", page_icon="📈", layout="wide")
@@ -19,6 +21,6 @@ if st.button("Stop Trading"):
     st.warning("Trading stopped! (This is a placeholder action)")
 
 st.info("Live trading data and controls would appear here in a real implementation.")
-st.write('added upstox client')
-st.write('')
+st.write('removed upstox client')
+st.write('trading_strategy')
 
