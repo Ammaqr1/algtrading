@@ -4,7 +4,7 @@ from google.protobuf.json_format import MessageToDict
 
 st.set_page_config(page_title="Simple Frontend", page_icon="📈", layout="wide")
 
-st.title("📈 Simple Trading Frontend")
+st.title("📈 Simple Trading Frontend testing")
 
 st.markdown("""
 This is a minimal Streamlit frontend for your trading strategy.<br>
