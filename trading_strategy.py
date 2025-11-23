@@ -87,6 +87,7 @@ class TradingStrategy:
         self.pe_instrument_key = None
         self.ce_high_price = 0
         self.pe_high_price = 0
+        self.total_high = 0
         self.ce_trader = None
         self.pe_trader = None
         
@@ -97,6 +98,7 @@ class TradingStrategy:
         self.pe_stoploss_hit_count = 0
         self.ce_reentry_placed = False
         self.pe_reentry_placed = False
+        self.reentry_placed = False
         
         # Time windows - use provided times or defaults
         if start_time is None:
@@ -165,7 +167,7 @@ class TradingStrategy:
             
             def on_portfolio_message(message):
                 """Handle portfolio/order update messages."""
-                self.handle_order_updates(message)
+                self.handle_order_updates(json.loads(message))
             
             def on_portfolio_open():
                 print("✅ Portfolio streamer connected")
@@ -200,6 +202,7 @@ class TradingStrategy:
             # Parse the message (format depends on Upstox API)
             if isinstance(message, dict):
                 order_data = message
+                
             else:
                 # Try to convert to dict if it's a model instance
                 order_data = message.to_dict() if hasattr(message, 'to_dict') else str(message)
@@ -278,7 +281,7 @@ class TradingStrategy:
                         print(f"❌ GTT Order {gtt_order_id} ENTRY rule FAILED: {message}")
                         
                         # Handle re-entry based on which order failed
-                        if is_ce_order and not self.ce_reentry_placed:
+                        if is_ce_order and not self.reentry_placed:
                             print(f"🔄 Attempting CE re-entry for failed order...")
                             try:
                                 self.ce_gtt_order_id = self.ce_trader.buyStock(
@@ -287,11 +290,11 @@ class TradingStrategy:
                                     instrument_key=self.ce_instrument_key
                                 )
                                 print(f"✅ CE re-entry order placed. GTT Order ID: {self.ce_gtt_order_id}")
-                                self.ce_reentry_placed = True
+                                self.reentry_placed = True
                             except Exception as e:
                                 print(f"❌ Error placing CE re-entry order: {e}")
                         
-                        elif is_pe_order and not self.pe_reentry_placed:
+                        elif is_pe_order and not self.reentry_placed:
                             print(f"🔄 Attempting PE re-entry for failed order...")
                             try:
                                 self.pe_gtt_order_id = self.pe_trader.buyStock(
@@ -300,7 +303,7 @@ class TradingStrategy:
                                     instrument_key=self.pe_instrument_key
                                 )
                                 print(f"✅ PE re-entry order placed. GTT Order ID: {self.pe_gtt_order_id}")
-                                self.pe_reentry_placed = True
+                                self.reentry_placed = True
                             except Exception as e:
                                 print(f"❌ Error placing PE re-entry order: {e}")
                     
@@ -406,7 +409,7 @@ class TradingStrategy:
         print("⏳ Waiting until 9:17 AM to capture Sensex price...")
         
         # Wait until 9:17 AM
-        # self.wait_until_time(self.start_time)
+        self.wait_until_time(self.start_time)
         
         print("📊 Capturing Sensex price at 9:17 AM...")
         
@@ -547,7 +550,6 @@ class TradingStrategy:
                     data_ce_ik = self.sensex_trader.extract_i1_ohlc(data_dict,ce_ik)
                     ce_ltp = data_ce_ik.get('ltpc', {})['ltp']
                     
-                    print('the ce_ltp is',ce_ltp)
                     
                     
                     
@@ -594,13 +596,18 @@ class TradingStrategy:
             print("❌ Cannot place orders: high prices not available")
             return
         
+        self.total_high = self.sensex_trader.highMarketValue(
+            self.pe_high_price, self.ce_high_price
+        )
+    
+        
         print(f"📝 Placing orders at high prices:")
         print(f"   CE: ₹{self.ce_high_price} (quantity: {self.quantity})")
         print(f"   PE: ₹{self.pe_high_price} (quantity: {self.quantity})")
         
         try:
             # Place CE order
-            if self.ce_instrument_key and self.ce_high_price > 0:
+            if self.ce_instrument_key and self.total_high > 0:
                 self.ce_gtt_order_id = self.ce_trader.buyStock(
                     quantity=self.quantity,
                     buy_price=self.ce_high_price,
@@ -609,13 +616,13 @@ class TradingStrategy:
                 print(f"✅ CE order placed. GTT Order ID: {self.ce_gtt_order_id}")
             
             # Place PE order
-            # if self.pe_instrument_key and self.pe_high_price > 0:
-            #     self.pe_gtt_order_id = self.pe_trader.buyStock(
-            #         quantity=self.quantity,
-            #         buy_price=self.pe_high_price,
-            #         instrument_key=self.pe_instrument_key
-            #     )['data']['gtt_order_ids'][0]
-            #     print(f"✅ PE order placed. GTT Order ID: {self.pe_gtt_order_id}")
+            if self.pe_instrument_key and self.total_high > 0:
+                self.pe_gtt_order_id = self.pe_trader.buyStock(
+                    quantity=self.quantity,
+                    buy_price=self.pe_high_price,
+                    instrument_key=self.pe_instrument_key
+                )['data']['gtt_order_ids'][0]
+                print(f"✅ PE order placed. GTT Order ID: {self.pe_gtt_order_id}")
                 
         except Exception as e:
             print(f"❌ Error placing orders: {e}")
@@ -729,7 +736,7 @@ class TradingStrategy:
                 # # Step 3: Track high prices from 9:17 to 9:30
                 await self.track_high_prices(websocket, ce_ik, pe_ik)
                 
-                # # Step 4: Place orders after 9:30
+                # Step 4: Place orders after 9:30
                 self.place_option_orders()
                 
                  # Step 5: Monitor orders for stop loss/target hits (run both monitoring functions concurrently)
