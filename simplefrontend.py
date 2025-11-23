@@ -2,7 +2,7 @@ import streamlit as st
 from google.protobuf.json_format import MessageToDict
 # import upstox_client
 from trading_strategy import TradingStrategy
-import websockets
+# websockets is imported in trading_strategy.py, no need to import here
 
 
 
