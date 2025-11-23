@@ -25,3 +25,6 @@ st.info("Live trading data and controls would appear here in a real implementati
 st.write('removed upstox client')
 st.write('removed trading_strategy')
 st.write('imported websockets')
+st.write(
+    'updated requirement.ts'
+)
