@@ -1,5 +1,6 @@
 import streamlit as st
 from google.protobuf.json_format import MessageToDict
+import upstox_client
 
 
 st.set_page_config(page_title="Simple Frontend", page_icon="📈", layout="wide")
