@@ -8,7 +8,7 @@ import asyncio
 import threading
 import sys
 from datetime import time as time_class
-from trading_strategy import TradingStrategy
+from trading_strategy import TradingStrategy, verify_access_token
 import queue
 
 # Page configuration
@@ -27,6 +27,12 @@ if 'logs' not in st.session_state:
     st.session_state.logs = []
 if 'log_queue' not in st.session_state:
     st.session_state.log_queue = queue.Queue()
+if 'token_verified' not in st.session_state:
+    st.session_state.token_verified = False
+if 'token_verification_message' not in st.session_state:
+    st.session_state.token_verification_message = ""
+if 'last_verified_token' not in st.session_state:
+    st.session_state.last_verified_token = ""
     
 
 # Custom print function to capture logs
@@ -44,7 +50,7 @@ class LogCapture:
     def flush(self):
         self.original_stdout.flush()
 
-def run_strategy_async(access_token, start_time, end_time, exit_time, quantity, tick_size, log_queue):
+def run_strategy_async(access_token, start_time, end_time, exit_time, quantity, tick_size, at_the_money_time, log_queue):
     """Run the trading strategy in a separate thread."""
     # Capture stdout to get logs
     log_capture = LogCapture(log_queue)
@@ -59,7 +65,8 @@ def run_strategy_async(access_token, start_time, end_time, exit_time, quantity, 
             start_time=start_time,
             end_time=end_time,
             exit_time=exit_time,
-            tick_size=tick_size
+            tick_size=tick_size,
+            at_the_money_time=at_the_money_time
         )
         
         # Run the strategy
@@ -89,15 +96,67 @@ with st.sidebar:
         "Upstox Access Token",
         type="password",
         help="Enter your Upstox API access token",
-        placeholder="Enter your access token here"
+        placeholder="Enter your access token here",
+        key="access_token_input"
     )
+    
+    # Token verification section
+    verify_col1, verify_col2 = st.columns([2, 1])
+    with verify_col1:
+        verify_button = st.button("🔍 Verify Token", use_container_width=True, help="Click to verify if your access token is valid")
+    with verify_col2:
+        if st.session_state.token_verified:
+            st.success("✅ Verified")
+        else:
+            st.warning("⚠️ Not Verified")
+    
+    # Show verification message if available
+    if st.session_state.token_verification_message:
+        if st.session_state.token_verified:
+            st.success(st.session_state.token_verification_message)
+        else:
+            st.error(st.session_state.token_verification_message)
+    
+    # Auto-verify token when it changes (if it's not empty)
+    if access_token and access_token != st.session_state.get('last_verified_token', ''):
+        # Reset verification status when token changes
+        st.session_state.token_verified = False
+        st.session_state.token_verification_message = ""
+        st.session_state.last_verified_token = access_token
+    
+    # Handle verify button click
+    if verify_button:
+        if not access_token or not access_token.strip():
+            st.error("❌ Please enter an access token first")
+            st.session_state.token_verified = False
+            st.session_state.token_verification_message = "❌ Access token is empty"
+        else:
+            with st.spinner("🔄 Verifying access token..."):
+                is_valid, message = verify_access_token(access_token)
+                st.session_state.token_verified = is_valid
+                st.session_state.token_verification_message = message
+                st.session_state.last_verified_token = access_token
+                st.rerun()
     
     st.markdown("---")
     
     # Time settings
     st.subheader("⏰ Time Settings")
     
+    # At The Money Time
+    st.markdown("**At The Money Time** (when to capture Sensex price)")
+    atm_time_col1, atm_time_col2 = st.columns(2)
+    with atm_time_col1:
+        atm_hour = st.number_input("ATM Hour", min_value=0, max_value=23, value=9, key="atm_hour", help="Hour when to capture Sensex price for option contract selection")
+    with atm_time_col2:
+        atm_minute = st.number_input("ATM Minute", min_value=0, max_value=59, value=17, key="atm_minute", help="Minute when to capture Sensex price for option contract selection")
+    at_the_money_time = time_class(atm_hour, atm_minute)
+    st.caption(f"At The Money Time: {at_the_money_time.strftime('%H:%M')}")
+    
+    st.markdown("---")
+    
     # Start Time
+    st.markdown("**Start Time** (when to start tracking high prices)")
     start_time_col1, start_time_col2 = st.columns(2)
     with start_time_col1:
         start_hour = st.number_input("Start Hour", min_value=0, max_value=23, value=9, key="start_hour")
@@ -109,6 +168,7 @@ with st.sidebar:
     st.markdown("---")
     
     # End Time
+    st.markdown("**End Time** (when to stop tracking high prices)")
     end_time_col1, end_time_col2 = st.columns(2)
     with end_time_col1:
         end_hour = st.number_input("End Hour", min_value=0, max_value=23, value=9, key="end_hour")
@@ -120,6 +180,7 @@ with st.sidebar:
     st.markdown("---")
     
     # Exit Time
+    st.markdown("**Exit Time** (when to exit all positions)")
     exit_time_col1, exit_time_col2 = st.columns(2)
     with exit_time_col1:
         exit_hour = st.number_input("Exit Hour", min_value=0, max_value=23, value=15, key="exit_hour")
@@ -148,6 +209,9 @@ with st.sidebar:
 if start_button:
     if not access_token:
         st.error("❌ Please enter your access token!")
+    elif not st.session_state.token_verified:
+        st.warning("⚠️ Please verify your access token before starting the strategy!")
+        st.info("💡 Click the 'Verify Token' button to validate your access token.")
     else:
         st.session_state.strategy_running = True
         st.session_state.logs = []
@@ -156,14 +220,14 @@ if start_button:
         # Start strategy in a separate thread
         strategy_thread = threading.Thread(
             target=run_strategy_async,
-            args=(access_token, start_time, end_time, exit_time, quantity, tick_size, st.session_state.log_queue),
+            args=(access_token, start_time, end_time, exit_time, quantity, tick_size, at_the_money_time, st.session_state.log_queue),
             daemon=True
         )
         strategy_thread.start()
         st.session_state.strategy_thread = strategy_thread
         
         st.success(f"✅ Strategy started!")
-        st.info(f"⏰ Time Settings: Start={start_time.strftime('%H:%M')}, End={end_time.strftime('%H:%M')}, Exit={exit_time.strftime('%H:%M')}")
+        st.info(f"⏰ Time Settings: ATM={at_the_money_time.strftime('%H:%M')}, Start={start_time.strftime('%H:%M')}, End={end_time.strftime('%H:%M')}, Exit={exit_time.strftime('%H:%M')}")
 
 if stop_button:
     st.session_state.strategy_running = False
@@ -182,18 +246,23 @@ with status_col1:
 
 with status_col2:
     if access_token:
-        st.success("✅ Access Token: Set")
+        if st.session_state.token_verified:
+            st.success("✅ Access Token: Verified")
+        else:
+            st.warning("⚠️ Access Token: Not Verified")
     else:
         st.warning("⚠️ Access Token: Not Set")
 
 # Configuration summary
 with st.expander("📋 Current Configuration", expanded=False):
-    config_col1, config_col2, config_col3 = st.columns(3)
+    config_col1, config_col2, config_col3, config_col4 = st.columns(4)
     with config_col1:
-        st.metric("Start Time", f"{start_time.strftime('%H:%M')}")
+        st.metric("ATM Time", f"{at_the_money_time.strftime('%H:%M')}")
     with config_col2:
-        st.metric("End Time", f"{end_time.strftime('%H:%M')}")
+        st.metric("Start Time", f"{start_time.strftime('%H:%M')}")
     with config_col3:
+        st.metric("End Time", f"{end_time.strftime('%H:%M')}")
+    with config_col4:
         st.metric("Exit Time", f"{exit_time.strftime('%H:%M')}")
     config_params_col1, config_params_col2 = st.columns(2)
     with config_params_col1:
@@ -257,7 +326,8 @@ with st.expander("📖 Instructions"):
     ### How to use:
     1. **Enter Access Token**: Input your Upstox API access token in the sidebar
     2. **Configure Time Settings**:
-       - **Start Time**: When to start capturing Sensex price (default: 9:17)
+       - **At The Money Time**: When to capture Sensex price for option contract selection (default: 9:17)
+       - **Start Time**: When to start tracking high prices (default: 9:17)
        - **End Time**: When to stop tracking high prices (default: 9:30)
        - **Exit Time**: When to exit all positions (default: 15:30 / 3:30 PM)
     3. **Set Quantity**: Number of contracts to trade (default: 1)
@@ -265,8 +335,8 @@ with st.expander("📖 Instructions"):
     5. **Monitor Logs**: Watch the logs section for real-time updates
     
     ### Strategy Flow:
-    - Connects to Upstox websocket at start time
-    - Captures Sensex price and gets CE/PE option contracts
+    - Connects to Upstox websocket
+    - Captures Sensex price at "At The Money Time" and gets CE/PE option contracts
     - Tracks highest prices for both options between start and end time
     - Places buy orders at highest price with stop loss and target
     - Monitors orders and handles re-entry logic

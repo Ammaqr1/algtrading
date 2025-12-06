@@ -7,6 +7,7 @@ import threading
 from dotenv import load_dotenv
 import os
 import time as tm
+import requests
 
 
 class AlgoKM:
@@ -351,15 +352,34 @@ class AlgoKM:
     
 
     def get_option_contracts_response(self):
-        options_instance = upstox_client.OptionsApi(
-            upstox_client.ApiClient(self.configuration)
-        )
-            
+        """Get option contracts response. Handles errors gracefully."""
+        try:
+            options_instance = upstox_client.OptionsApi(
+                upstox_client.ApiClient(self.configuration)
+            )
+                
             # Get option contracts for the expiry date
-        self.option_contracts = options_instance.get_option_contracts(
-            instrument_key=self.instrument_key,
-            expiry_date=self.get_thursday_date()
-        )
+            self.option_contracts = options_instance.get_option_contracts(
+                instrument_key=self.instrument_key,
+                expiry_date=self.get_thursday_date()
+            )
+        except upstox_client.rest.ApiException as e:
+            print(f"❌ Error fetching option contracts (API Exception): {e.status} - {e.reason}")
+            if e.body:
+                try:
+                    error_body = json.loads(e.body) if isinstance(e.body, str) else e.body
+                    error_msg = error_body.get('errors', [{}])[0].get('message', 'Unknown error')
+                    print(f"   Error message: {error_msg}")
+                    if 'Invalid token' in error_msg or e.status == 401:
+                        print("   💡 Your access token may be expired or invalid. Please refresh it.")
+                except:
+                    print(f"   Response body: {e.body}")
+            self.option_contracts = None
+        except Exception as e:
+            print(f"❌ Unexpected error fetching option contracts: {e}")
+            import traceback
+            traceback.print_exc()
+            self.option_contracts = None
         
 
     def get_option_contracts(self, sensex_price, instrument_key=None):
@@ -450,6 +470,54 @@ class AlgoKM:
         start_datetime = ist.localize(start_datetime)
         start_timestamp_ms = int(start_datetime.timestamp() * 1000)
         return start_timestamp_ms
+
+
+def verify_access_token(access_token):
+    """
+    Verify if the access token is valid by making a test API call.
+    
+    Args:
+        access_token: Upstox access token to verify
+        
+    Returns:
+        tuple: (is_valid: bool, message: str)
+    """
+    if not access_token or not access_token.strip():
+        return False, "❌ Access token is empty"
+    
+    try:
+        # Use market data feed authorization endpoint to verify token
+        headers = {
+            'Accept': 'application/json',
+            'Authorization': f'Bearer {access_token.strip()}'
+        }
+        url = 'https://api.upstox.com/v3/feed/market-data-feed/authorize'
+        
+        response = requests.get(url=url, headers=headers, timeout=10)
+        response_data = response.json()
+        
+        # Check if request was successful
+        if response.status_code == 200:
+            if response_data.get('status') == 'success' or 'data' in response_data:
+                return True, "✅ Access token is valid"
+            else:
+                error_msg = response_data.get('errors', [{}])[0].get('message', 'Unknown error')
+                return False, f"❌ Token validation failed: {error_msg}"
+        elif response.status_code == 401:
+            error_msg = response_data.get('errors', [{}])[0].get('message', 'Unauthorized')
+            return False, f"❌ Invalid or expired token: {error_msg}"
+        else:
+            error_msg = response_data.get('errors', [{}])[0].get('message', f'HTTP {response.status_code}')
+            return False, f"❌ API Error: {error_msg}"
+            
+    except requests.exceptions.Timeout:
+        return False, "❌ Request timeout. Please check your internet connection."
+    except requests.exceptions.ConnectionError:
+        return False, "❌ Connection error. Please check your internet connection."
+    except requests.exceptions.RequestException as e:
+        return False, f"❌ Network error: {str(e)}"
+    except Exception as e:
+        return False, f"❌ Unexpected error: {str(e)}"
         
     
 # load_dotenv()

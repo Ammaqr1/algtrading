@@ -10,6 +10,7 @@ Main strategy execution that:
 """
 
 import asyncio
+from doctest import set_unittest_reportflags
 import json
 import ssl
 import websockets
@@ -18,7 +19,7 @@ from google.protobuf.json_format import MessageToDict
 import MarketDataFeed_pb2 as pb
 import os
 from dotenv import load_dotenv
-from mani import AlgoKM
+from mani import AlgoKM, verify_access_token
 import pytz
 from datetime import datetime, time as time_class
 import time as time_module
@@ -52,7 +53,7 @@ def decode_protobuf(buffer):
 class TradingStrategy:
     """Main trading strategy class that orchestrates the entire flow."""
     
-    def __init__(self, access_token, quantity=1, start_time=None, end_time=None, exit_time=None,tick_size=False):
+    def __init__(self, access_token, quantity=1, start_time=None, end_time=None, exit_time=None,tick_size=False,sensex_price_at_917=None,at_the_money_time=None):
         """
         Initialize trading strategy.
         
@@ -82,7 +83,8 @@ class TradingStrategy:
         # self._pre_fetch_options()
         
         # State variables
-        self.sensex_price_at_917 = None
+        self.at_the_money_time = at_the_money_time
+        self.sensex_price_at_917 = sensex_price_at_917
         self.ce_instrument_key = None
         self.pe_instrument_key = None
         self.ce_high_price = 0
@@ -101,6 +103,8 @@ class TradingStrategy:
         self.reentry_placed = False
         
         # Time windows - use provided times or defaults
+        if at_the_money_time is None:
+            at_the_money_time = time_class(9, 17)  # 9:17 AM
         if start_time is None:
             start_time = time_class(9, 17)  # 9:17 AM
         if end_time is None:
@@ -108,11 +112,12 @@ class TradingStrategy:
         if exit_time is None:
             exit_time = time_class(15, 30)   # 3:30 PM
         
+        self.at_the_money_time = at_the_money_time
         self.start_time = start_time
         self.end_time = end_time
         self.exit_time = exit_time
         print('self.end_time',self.end_time)
-        
+
         # Portfolio streamer for order tracking
         self.portfolio_streamer = None
         self.portfolio_thread = None
@@ -409,7 +414,7 @@ class TradingStrategy:
         print("⏳ Waiting until 9:17 AM to capture Sensex price...")
         
         # Wait until 9:17 AM
-        self.wait_until_time(self.start_time)
+        self.wait_until_time(self.at_the_money_time)
         
         print("📊 Capturing Sensex price at 9:17 AM...")
         
@@ -489,9 +494,9 @@ class TradingStrategy:
             tick_size=True
         )
         
-        return ce_ik, pe_ik
+        return
     
-    async def track_high_prices(self, websocket, ce_ik, pe_ik):
+    async def track_high_prices(self, websocket):
         """
         Track highest prices for CE and PE options between 9:17-9:30.
         
@@ -508,7 +513,7 @@ class TradingStrategy:
             "method": "sub",
             "data": {
                 "mode": "full",
-                "instrumentKeys": [ce_ik, pe_ik]
+                "instrumentKeys": [self.ce_instrument_key, self.pe_instrument_key]
             }
         }
         binary_data = json.dumps(data).encode('utf-8')
@@ -545,9 +550,9 @@ class TradingStrategy:
                 
                 
                 # Extract prices for CE
-                if 'feeds' in data_dict and ce_ik in data_dict['feeds']:
+                if 'feeds' in data_dict and self.ce_instrument_key in data_dict['feeds']:
                     
-                    data_ce_ik = self.sensex_trader.extract_i1_ohlc(data_dict,ce_ik)
+                    data_ce_ik = self.sensex_trader.extract_i1_ohlc(data_dict,self.ce_instrument_key)
                     ce_ltp = data_ce_ik.get('ltpc', {})['ltp']
                     
                     
@@ -564,9 +569,9 @@ class TradingStrategy:
                         )
                 
                 # Extract prices for PE
-                if 'feeds' in data_dict and pe_ik in data_dict['feeds']:
+                if 'feeds' in data_dict and self.pe_instrument_key in data_dict['feeds']:
                     
-                    data_pe_ik = self.sensex_trader.extract_i1_ohlc(data_dict,pe_ik)
+                    data_pe_ik = self.sensex_trader.extract_i1_ohlc(data_dict,self.pe_instrument_key)
                     pe_ltp = data_pe_ik.get('ltpc', {})['ltp']
                     
                 
@@ -728,13 +733,16 @@ class TradingStrategy:
                 print("✅ WebSocket connected")
                 
                 # Step 1: Capture Sensex price at 9:17
-                sensex_price = await self.capture_sensex_price_at_917(websocket)
+                if not self.sensex_price_at_917:
+                    sensex_price = await self.capture_sensex_price_at_917(websocket)
+          
                 
                 # # Step 2: Get option contracts
-                ce_ik, pe_ik = self.get_option_contracts_for_price(sensex_price)
+                self.get_option_contracts_for_price(sensex_price)
                 
                 # # Step 3: Track high prices from 9:17 to 9:30
-                await self.track_high_prices(websocket, ce_ik, pe_ik)
+                if not self.ce_high_price and self.pe_high_price:
+                    await self.track_high_prices(websocket)
                 
                 # Step 4: Place orders after 9:30
                 self.place_option_orders()
@@ -760,7 +768,7 @@ def main():
         print("❌ Error: access_token not found in environment variables")
         return
     
-    strategy = TradingStrategy(access_token=my_access_token, quantity=1)
+    strategy = TradingStrategy(access_token=my_access_token, quantity=1,sensex_price_at_917=500)
     asyncio.run(strategy.execute_strategy())
     # strategy.run_portfolio_streamer()
     # strategy = TradingStrategy(access_token=my_access_token, quantity=1)
@@ -768,6 +776,6 @@ def main():
     # time_module.sleep(60)  # Keep it running for testing
 
 
-# if __name__ == "__main__":
-#     main()
+if __name__ == "__main__":
+    main()
 
