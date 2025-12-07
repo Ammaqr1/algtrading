@@ -27,16 +27,17 @@ import threading
 import queue
 import upstox_client
 
-# Load environment variables
+
 load_dotenv()
 my_access_token = os.getenv('access_token')
 
 
-def get_market_data_feed_authorize_v3():
+
+def get_market_data_feed_authorize_v3(access_token):
     """Get authorization for market data feed."""
     headers = {
         'Accept': 'application/json',
-        'Authorization': f'Bearer {my_access_token}'
+        'Authorization': f'Bearer {access_token}'
     }
     url = 'https://api.upstox.com/v3/feed/market-data-feed/authorize'
     api_response = requests.get(url=url, headers=headers)
@@ -754,7 +755,7 @@ class TradingStrategy:
         ssl_context.verify_mode = ssl.CERT_NONE
         
         # Get market data feed authorization
-        response = get_market_data_feed_authorize_v3()
+        response = get_market_data_feed_authorize_v3(self.access_token)
         print(response,'this is the response')
         
         try:
@@ -809,6 +810,6 @@ def main():
     # time_module.sleep(60)  # Keep it running for testing
 
 
-# if __name__ == "__main__":
-#     main()
+if __name__ == "__main__":
+    main()
 
