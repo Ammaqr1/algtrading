@@ -755,6 +755,7 @@ class TradingStrategy:
         
         # Get market data feed authorization
         response = get_market_data_feed_authorize_v3()
+        print(response,'this is the response')
         
         try:
             # Connect to WebSocket
