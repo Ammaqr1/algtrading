@@ -756,7 +756,6 @@ class TradingStrategy:
         
         # Get market data feed authorization
         response = get_market_data_feed_authorize_v3(self.access_token)
-        print(response,'this is the response')
         
         try:
             # Connect to WebSocket
@@ -810,6 +809,6 @@ def main():
     # time_module.sleep(60)  # Keep it running for testing
 
 
-if __name__ == "__main__":
-    main()
+# if __name__ == "__main__":
+#     main()
 
