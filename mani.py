@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 import os
 import time as tm
 import requests
-
+import json
 
 class AlgoKM:
     def __init__(self,instrument_key='BSE_INDEX|SENSEX',access_token=None,tick_size=False):
@@ -416,7 +416,7 @@ class AlgoKM:
             # Extract data
             data = response_dict.get('data', [])
             if not data:
-                raise ValueError(f"No option contracts found for {instrument_key} on {expiry_date}")
+                raise ValueError(f"No option contracts found for {instrument_key} on {self.get_thursday_date().strftime('%Y-%m-%d')}")
             
             # Create DataFrame
             df = pd.DataFrame(data)
@@ -471,6 +471,75 @@ class AlgoKM:
         start_timestamp_ms = int(start_datetime.timestamp() * 1000)
         return start_timestamp_ms
 
+    def json_into_dict(self,json_data):
+        json_data = json.dumps(json_data)
+        return json.loads(json_data)
+
+
+    def intraday_history_per_minute(self, instrument_key, max_retries=3, retry_delay=1):
+        """
+        Fetch intraday per minute history for an instrument.
+        Retries up to `max_retries` times if network error or no valid JSON data.
+        """
+        url = f'https://api.upstox.com/v3/historical-candle/intraday/{instrument_key}/minutes/1'
+        headers = {
+            'Accept': 'application/json',
+            'Authorization': f'Bearer {self.configuration.access_token}'
+        }
+        last_exception = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = requests.get(url=url, headers=headers, timeout=10)
+                if response.status_code == 200:
+                    try:
+                        json_data = response.json()
+                        if json_data:  # not None or empty
+                            return self.json_into_dict(json_data)
+                        else:
+                            # JSON data returned is empty or null, retry
+                            print(f"[intraday_history_per_minute] Warning: Empty JSON response (attempt {attempt})")
+                    except Exception as e_json:
+                        print(f"[intraday_history_per_minute] Error decoding JSON (attempt {attempt}): {e_json}")
+                        last_exception = e_json
+                else:
+                    print(f"[intraday_history_per_minute] HTTP {response.status_code} (attempt {attempt})")
+            except Exception as e:
+                print(f"[intraday_history_per_minute] Request error (attempt {attempt}): {e}")
+                last_exception = e
+            if attempt < max_retries:
+                tm.sleep(retry_delay)
+        # All attempts failed
+        print("[intraday_history_per_minute] Failed to fetch data after retries.")
+        if last_exception:
+            print(f"Last exception: {last_exception}")
+        return None
+
+
+
+    def highest_price_per_minute(self, data, start_time, end_time, highest_price, ist=pytz.timezone("Asia/Kolkata")):
+        """
+        Filter candles by time range and track highest price.
+        
+        Args:
+            data: Dictionary with 'data' -> 'candles' structure
+            start_time: time object for start time
+            end_time: time object for end time
+            highest_price: initial highest price value
+            ist: timezone (default: IST)
+        
+        Returns:
+            highest_price: Maximum high price from filtered candles
+        """
+        candles = data.get('data', {}).get('candles', [])
+        for candle in candles:
+            # Extract timestamp from candle[0] and get time component
+            candle_time = datetime.fromisoformat(candle[0]).time()
+            if start_time <= candle_time <= end_time:
+                # candle[2] is the high price
+                highest_price = self.highMarketValue(highest_price, candle[2])
+        return highest_price
+
+        
 
 def verify_access_token(access_token):
     """
@@ -522,12 +591,24 @@ def verify_access_token(access_token):
     
 # load_dotenv()
 # my_access_token = os.getenv('access_token')  
-# # print(my_access_token,'this is the access_token')
-# am = AlgoKM(access_token=my_access_token,tick_size=False)
+# instrument_key = 'BSE_FO|1127928'
+
+
+# print(my_access_token,'this is the access_token')
+
+
+# am = AlgoKM(instrument_key=instrument_key,access_token=my_access_token,tick_size=False)
+
+
 # data = {'feeds': {'BSE_FO|1127928': {'fullFeed': {'marketFF': {'ltpc': {'ltp': 255.0, 'ltt': '1763529366611', 'ltq': '40', 'cp': 386.2}, 'marketLevel': {'bidAskQuote': [{'bidQ': '80', 'bidP': 254.6, 'askQ': '60', 'askP': 254.9}, {'bidQ': '20', 'bidP': 254.55, 'askQ': '40', 'askP': 255.0}, {'bidQ': '20', 'bidP': 254.5, 'askQ': '1080', 'askP': 255.05}, {'bidQ': '160', 'bidP': 254.4, 'askQ': '340', 'askP': 255.1}, {'bidQ': '340', 'bidP': 254.35, 'askQ': '340', 'askP': 255.15}]}, 'optionGreeks': {'delta': -0.4796, 'theta': -112.3274, 'gamma': 0.0006, 'vega': 19.3795, 'rho': -1.3444}, 'marketOHLC': {'ohlc': [{'interval': '1d', 'open': 385.95, 'high': 488.35, 'low': 235.6, 'close': 255.0, 'vol': '9027620', 'ts': '1763490600000'}, {'interval': 'I1', 'open': 260.5, 'high': 261.35, 'low': 255.4, 'close': 255.8, 'vol': '142360', 'ts': '1763529300000'}]}, 'atp': 296.86, 'vtt': '9027620', 'oi': 1416020.0, 'iv': 0.1387786865234375, 'tbq': 188240.0, 'tsq': 263140.0}}, 'requestMode': 'full_d5'}, 'BSE_FO|1128472': {'fullFeed': {'marketFF': {'ltpc': {'ltp': 228.1, 'ltt': '1763529365954', 'ltq': '40', 'cp': 239.35}, 'marketLevel': {'bidAskQuote': [{'bidQ': '160', 'bidP': 227.8, 'askQ': '20', 'askP': 228.3}, {'bidQ': '80', 'bidP': 227.75, 'askQ': '600', 'askP': 228.35}, {'bidQ': '220', 'bidP': 227.7, 'askQ': '160', 'askP': 228.4}, {'bidQ': '260', 'bidP': 227.65, 'askQ': '220', 'askP': 228.45}, {'bidQ': '680', 'bidP': 227.6, 'askQ': '180', 'askP': 228.5}]}, 'optionGreeks': {'delta': 0.5234, 'theta': -88.2644, 'gamma': 0.0008, 'vega': 19.3711, 'rho': 1.4507}, 'marketOHLC': {'ohlc': [{'interval': '1d', 'open': 239.2, 'high': 249.05, 'low': 125.75, 'close': 228.1, 'vol': '18783540', 'ts': '1763490600000'}, {'interval': 'I1', 'open': 219.35, 'high': 226.75, 'low': 219.35, 'close': 226.75, 'vol': '126180', 'ts': '1763529300000'}]}, 'atp': 191.32, 'vtt': '18783540', 'oi': 1438320.0, 'iv': 0.109100341796875, 'tbq': 238620.0, 'tsq': 226160.0}}, 'requestMode': 'full_d5'}}, 'currentTs': '1763529366451'}
 # dat = am.extract_i1_ohlc(data,'BSE_FO|1127928')
 # # dat.get('ltpc', {}).get('ltp', 0) if data.get('ltpc') else 0
 # print(dat.get('ltpc', {})['ltp'])
+
+
+
+# adata = am.intraday_history_per_minute(instrument_key,3)
+# print(adata)
 
 
 

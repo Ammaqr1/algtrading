@@ -106,9 +106,9 @@ class TradingStrategy:
         if at_the_money_time is None:
             at_the_money_time = time_class(9, 17)  # 9:17 AM
         if start_time is None:
-            start_time = time_class(9, 17)  # 9:17 AM
+            start_time = time_class(11 ,8)  # 9:17 AM
         if end_time is None:
-            end_time = time_class(9, 30)    # 9:30 AM
+            end_time = time_class(12, 58)    # 9:30 AM
         if exit_time is None:
             exit_time = time_class(15, 30)   # 3:30 PM
         
@@ -142,19 +142,23 @@ class TradingStrategy:
         fetch_thread.start()
         print("✅ Option contracts pre-fetch started in background")
         
-    def wait_until_time(self, target_time):
+    async def wait_until_time(self, target_time, silent=False,):
         """
         Wait until target time is reached.
         
         Args:
             target_time: time object representing target time
+            silent: If True, don't print when time is reached
         """
         while True:
             now = datetime.now(self.ist).time()
             if now >= target_time:
-                print(f"⏰ Target time {target_time.strftime('%H:%M')} reached!")
+                if not silent:
+                    print(f"⏰ Target time {target_time.strftime('%H:%M')} reached!")
                 return
-            time_module.sleep(1)
+           
+            await asyncio.sleep(1)
+        
     
     def setup_portfolio_streamer(self):
         """Set up PortfolioDataStreamer to track GTT order updates."""
@@ -411,12 +415,12 @@ class TradingStrategy:
         Returns:
             float: Sensex price at 9:17
         """
-        print("⏳ Waiting until 9:17 AM to capture Sensex price...")
+        print(f"⏳ Waiting until {self.at_the_money_time.strftime('%H:%M')} to capture Sensex price...")
         
         # Wait until 9:17 AM
-        self.wait_until_time(self.at_the_money_time)
+        # await self.wait_until_time(self.at_the_money_time)
         
-        print("📊 Capturing Sensex price at 9:17 AM...")
+        print(f"📊 Capturing Sensex price at {self.at_the_money_time.strftime('%H:%M')}...")
         
         # Subscribe to Sensex feed if not already subscribed
         data = {
@@ -505,7 +509,7 @@ class TradingStrategy:
             ce_ik: CE instrument key
             pe_ik: PE instrument key
         """
-        print(f"📈 Tracking high prices for CE and PE from 9:17 to 9:30...")
+        print(f"📈 Tracking high prices for CE and PE from {self.start_time.strftime('%H:%M')} to {self.end_time.strftime('%H:%M')}...")
         
         # Subscribe to both CE and PE feeds
         data = {
@@ -525,22 +529,50 @@ class TradingStrategy:
         
         
         # Track until 9:30
+        already_tracked = False
+        silent = False
         while True:
             now = datetime.now(self.ist).time()
             
             # Check if we've passed 9:30
             if now > self.end_time:
-                print(f"⏰ 9:30 AM reached. Final high prices:")
+                print(f"⏰ {self.end_time.strftime('%H:%M')} AM reached. Final high prices:")
                 print(f"   CE High: ₹{self.ce_high_price}")
                 print(f"   PE High: ₹{self.pe_high_price}")
                 break
             
+            # check if start time is reached
+            if self.start_time <= now <= self.end_time and not already_tracked:
+
+                ce_data = self.sensex_trader.intraday_history_per_minute(self.ce_instrument_key)
+                pe_data = self.sensex_trader.intraday_history_per_minute(self.pe_instrument_key)
+
+                silent = True
+                already_tracked = True
+
+                self.ce_high_price = self.sensex_trader.highest_price_per_minute(ce_data,self.start_time,self.end_time,self.ce_high_price)
+                self.pe_high_price = self.sensex_trader.highest_price_per_minute(pe_data,self.start_time,self.end_time,self.pe_high_price)
+                
+
             # Check exit time
             if now >= self.exit_time:
+                
+                ce_data = self.sensex_trader.intraday_history_per_minute(self.ce_instrument_key)
+                pe_data = self.sensex_trader.intraday_history_per_minute(self.pe_instrument_key)
+
+                self.ce_high_price = self.sensex_trader.highest_price_per_minute(ce_data,self.start_time,self.end_time,self.ce_high_price)
+                self.pe_high_price = self.sensex_trader.highest_price_per_minute(pe_data,self.start_time,self.end_time,self.pe_high_price)
+
                 print(f"⏰ Exit time {self.exit_time.strftime('%H:%M')} reached.")
+                already_tracked = True
+
                 break
             
             try:
+                await self.wait_until_time(self.start_time, silent=silent)
+             
+                silent = True
+                    
                 # Receive message with timeout
                 message = await asyncio.wait_for(websocket.recv(), timeout=1.0)
                 decoded_data = decode_protobuf(message)
@@ -579,13 +611,13 @@ class TradingStrategy:
                     if int(data_pe_ik['ohlc_i1']['ts']) <= now_ms <= current_time_ms:
                         self.pe_high_price = self.sensex_trader.highMarketValue(
                             self.pe_high_price, data_pe_ik['ohlc_i1']['high'])  
-                         
-                         
+                            
+                            
                     if pe_ltp > 0:
                         self.pe_high_price = self.sensex_trader.highMarketValue(
                             self.pe_high_price, pe_ltp
                         )
-                
+                    
             except asyncio.TimeoutError:
                 # Timeout is expected, continue tracking
                 continue
@@ -741,9 +773,9 @@ class TradingStrategy:
                 self.get_option_contracts_for_price(sensex_price)
                 
                 # # Step 3: Track high prices from 9:17 to 9:30
-                if not self.ce_high_price and self.pe_high_price:
+                if not self.ce_high_price and not self.pe_high_price:
                     await self.track_high_prices(websocket)
-                
+
                 # Step 4: Place orders after 9:30
                 self.place_option_orders()
                 
@@ -768,7 +800,7 @@ def main():
         print("❌ Error: access_token not found in environment variables")
         return
     
-    strategy = TradingStrategy(access_token=my_access_token, quantity=1,sensex_price_at_917=500)
+    strategy = TradingStrategy(access_token=my_access_token, quantity=1,at_the_money_time=time_class(12,46))
     asyncio.run(strategy.execute_strategy())
     # strategy.run_portfolio_streamer()
     # strategy = TradingStrategy(access_token=my_access_token, quantity=1)
@@ -776,6 +808,6 @@ def main():
     # time_module.sleep(60)  # Keep it running for testing
 
 
-if __name__ == "__main__":
-    main()
+# if __name__ == "__main__":
+#     main()
 
