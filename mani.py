@@ -591,13 +591,13 @@ def verify_access_token(access_token):
     
 # load_dotenv()
 # my_access_token = os.getenv('access_token')  
-# instrument_key = 'BSE_FO|1127928'
+# instrument_key = 'BSE_FO|1134500'
 
 
 # print(my_access_token,'this is the access_token')
 
 
-# am = AlgoKM(instrument_key=instrument_key,access_token=my_access_token,tick_size=False)
+# am = AlgoKM(instrument_key=instrument_key,access_token=my_access_token,tick_size=True)
 
 
 # data = {'feeds': {'BSE_FO|1127928': {'fullFeed': {'marketFF': {'ltpc': {'ltp': 255.0, 'ltt': '1763529366611', 'ltq': '40', 'cp': 386.2}, 'marketLevel': {'bidAskQuote': [{'bidQ': '80', 'bidP': 254.6, 'askQ': '60', 'askP': 254.9}, {'bidQ': '20', 'bidP': 254.55, 'askQ': '40', 'askP': 255.0}, {'bidQ': '20', 'bidP': 254.5, 'askQ': '1080', 'askP': 255.05}, {'bidQ': '160', 'bidP': 254.4, 'askQ': '340', 'askP': 255.1}, {'bidQ': '340', 'bidP': 254.35, 'askQ': '340', 'askP': 255.15}]}, 'optionGreeks': {'delta': -0.4796, 'theta': -112.3274, 'gamma': 0.0006, 'vega': 19.3795, 'rho': -1.3444}, 'marketOHLC': {'ohlc': [{'interval': '1d', 'open': 385.95, 'high': 488.35, 'low': 235.6, 'close': 255.0, 'vol': '9027620', 'ts': '1763490600000'}, {'interval': 'I1', 'open': 260.5, 'high': 261.35, 'low': 255.4, 'close': 255.8, 'vol': '142360', 'ts': '1763529300000'}]}, 'atp': 296.86, 'vtt': '9027620', 'oi': 1416020.0, 'iv': 0.1387786865234375, 'tbq': 188240.0, 'tsq': 263140.0}}, 'requestMode': 'full_d5'}, 'BSE_FO|1128472': {'fullFeed': {'marketFF': {'ltpc': {'ltp': 228.1, 'ltt': '1763529365954', 'ltq': '40', 'cp': 239.35}, 'marketLevel': {'bidAskQuote': [{'bidQ': '160', 'bidP': 227.8, 'askQ': '20', 'askP': 228.3}, {'bidQ': '80', 'bidP': 227.75, 'askQ': '600', 'askP': 228.35}, {'bidQ': '220', 'bidP': 227.7, 'askQ': '160', 'askP': 228.4}, {'bidQ': '260', 'bidP': 227.65, 'askQ': '220', 'askP': 228.45}, {'bidQ': '680', 'bidP': 227.6, 'askQ': '180', 'askP': 228.5}]}, 'optionGreeks': {'delta': 0.5234, 'theta': -88.2644, 'gamma': 0.0008, 'vega': 19.3711, 'rho': 1.4507}, 'marketOHLC': {'ohlc': [{'interval': '1d', 'open': 239.2, 'high': 249.05, 'low': 125.75, 'close': 228.1, 'vol': '18783540', 'ts': '1763490600000'}, {'interval': 'I1', 'open': 219.35, 'high': 226.75, 'low': 219.35, 'close': 226.75, 'vol': '126180', 'ts': '1763529300000'}]}, 'atp': 191.32, 'vtt': '18783540', 'oi': 1438320.0, 'iv': 0.109100341796875, 'tbq': 238620.0, 'tsq': 226160.0}}, 'requestMode': 'full_d5'}}, 'currentTs': '1763529366451'}
@@ -607,9 +607,8 @@ def verify_access_token(access_token):
 
 
 
-# adata = am.intraday_history_per_minute(instrument_key,3)
-# print(adata)
-
+# adata = am.buyStock(quantity=100,buy_price=255.0,instrument_key=instrument_key)
+# print(adata,'this is the adata')
 
 
 

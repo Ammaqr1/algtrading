@@ -217,7 +217,6 @@ if start_button:
         st.session_state.logs = []
         st.session_state.log_queue = queue.Queue()
 
-        st.write(access_token,'this is the access token')
         
         # Start strategy in a separate thread
         strategy_thread = threading.Thread(

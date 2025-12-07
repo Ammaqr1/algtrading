@@ -107,9 +107,9 @@ class TradingStrategy:
         if at_the_money_time is None:
             at_the_money_time = time_class(9, 17)  # 9:17 AM
         if start_time is None:
-            start_time = time_class(11 ,8)  # 9:17 AM
+            start_time = time_class(13 ,23)  # 9:17 AM
         if end_time is None:
-            end_time = time_class(12, 58)    # 9:30 AM
+            end_time = time_class(13, 24)    # 9:30 AM
         if exit_time is None:
             exit_time = time_class(15, 30)   # 3:30 PM
         
@@ -801,7 +801,7 @@ def main():
         print("❌ Error: access_token not found in environment variables")
         return
     
-    strategy = TradingStrategy(access_token=my_access_token, quantity=1,at_the_money_time=time_class(12,46))
+    strategy = TradingStrategy(access_token=my_access_token, quantity=1,at_the_money_time=time_class(13,22))
     asyncio.run(strategy.execute_strategy())
     # strategy.run_portfolio_streamer()
     # strategy = TradingStrategy(access_token=my_access_token, quantity=1)
