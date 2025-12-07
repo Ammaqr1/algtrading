@@ -418,7 +418,7 @@ class TradingStrategy:
         print(f"⏳ Waiting until {self.at_the_money_time.strftime('%H:%M')} to capture Sensex price...")
         
         # Wait until 9:17 AM
-        # await self.wait_until_time(self.at_the_money_time)
+        await self.wait_until_time(self.at_the_money_time)
         
         print(f"📊 Capturing Sensex price at {self.at_the_money_time.strftime('%H:%M')}...")
         
