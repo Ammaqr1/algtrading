@@ -81,7 +81,7 @@ class AlgoKM:
         try:
             api_response = self.api_instance.place_gtt_order(body)
             print("Order Placed:", api_response)
-            return api_response.data.gtt_order_ids[0]
+            return api_response
         except ApiException as e:
             print("Exception when calling OrderApi->place_order: %s\n" % e)
 
@@ -106,7 +106,7 @@ class AlgoKM:
             slice=False
     )
         try:
-            api_response = self.api_instance.place_order(body)
+            api_response = self.api_instance.place_order(sell_order)
             print("Order Placed:", api_response)
         except ApiException as e:
             print("Exception when calling OrderApi->place_order: %s\n" % e)
@@ -538,6 +538,16 @@ class AlgoKM:
                 # candle[2] is the high price
                 highest_price = self.highMarketValue(highest_price, candle[2])
         return highest_price
+    
+    def price_at_917(self,time,insturment_key='BSE_INDEX|SENSEX'):
+        sensex_data = self.intraday_history_per_minute(instrument_key=insturment_key,max_retries=2)
+        candles = sensex_data.get('data', {}).get('candles', [])
+        for candle in candles:
+            candle_time = datetime.fromisoformat(candle[0]).time()
+            if time == candle_time:
+                return candle[1]
+        return None
+
 
         
 

@@ -416,10 +416,21 @@ class TradingStrategy:
         Returns:
             float: Sensex price at 9:17
         """
-        print(f"⏳ Waiting until {self.at_the_money_time.strftime('%H:%M')} to capture Sensex price...")
+        # Check if current time equals at_the_money_time
+        now = datetime.now(self.ist).time()
+        current_time_only = time_class(now.hour, now.minute)
         
-        # Wait until 9:17 AM
-        await self.wait_until_time(self.at_the_money_time)
+        if current_time_only > self.at_the_money_time:
+            print(f"⏳ The at-the-money time ({self.at_the_money_time.strftime('%H:%M')}) has already passed. Fetching Sensex price from historical data...")
+            sensex_price = self.sensex_trader.price_at_917(self.at_the_money_time)
+            if not sensex_price:
+                print(f"⚠️ Sensex price is not available at {self.at_the_money_time.strftime('%H:%M')}, waiting for 30 seconds")
+                time_module.sleep(30)
+                sensex_price = self.sensex_trader.price_at_917(self.at_the_money_time)
+            print(f"✅ Sensex price at {self.at_the_money_time.strftime('%H:%M')}: ₹{sensex_price}")
+            return sensex_price
+
+        await self.wait_until_time(self.at_the_money_time, silent=False)
         
         print(f"📊 Capturing Sensex price at {self.at_the_money_time.strftime('%H:%M')}...")
         
@@ -770,7 +781,7 @@ class TradingStrategy:
                     sensex_price = await self.capture_sensex_price_at_917(websocket)
           
                 
-                # # Step 2: Get option contracts
+                # Step 2: Get option contracts
                 self.get_option_contracts_for_price(sensex_price)
                 
                 # # Step 3: Track high prices from 9:17 to 9:30
