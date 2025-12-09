@@ -296,7 +296,7 @@ class TradingStrategy:
                             try:
                                 self.ce_gtt_order_id = self.ce_trader.buyStock(
                                     quantity=self.quantity,
-                                    buy_price=self.buy_price,
+                                    buy_price=self.ce_high_price,
                                     instrument_key=self.ce_instrument_key
                                 ).data.gtt_order_ids[0]
                                 print(f"✅ CE re-entry order placed. GTT Order ID: {self.ce_gtt_order_id}")
@@ -309,7 +309,7 @@ class TradingStrategy:
                             try:
                                 self.pe_gtt_order_id = self.pe_trader.buyStock(
                                     quantity=self.quantity,
-                                    buy_price=self.buy_price,
+                                    buy_price=self.pe_high_price,
                                     instrument_key=self.pe_instrument_key
                                 ).data.gtt_order_ids[0]
                                 print(f"✅ PE re-entry order placed. GTT Order ID: {self.pe_gtt_order_id}")
@@ -325,7 +325,7 @@ class TradingStrategy:
                             try:
                                 self.ce_gtt_order_id = self.ce_trader.buyStock(
                                     quantity=self.quantity,
-                                    buy_price=self.buy_price,
+                                    buy_price=self.ce_high_price,
                                     instrument_key=self.ce_instrument_key
                                 )
                                 print(f"✅ CE re-entry order placed. GTT Order ID: {self.ce_gtt_order_id}")
@@ -339,7 +339,7 @@ class TradingStrategy:
                             try:
                                 self.pe_gtt_order_id = self.pe_trader.buyStock(
                                     quantity=self.quantity,
-                                    buy_price=self.buy_price,
+                                    buy_price=self.pe_high_price,
                                     instrument_key=self.pe_instrument_key
                                 )
                                 print(f"✅ PE re-entry order placed. GTT Order ID: {self.pe_gtt_order_id}")
@@ -664,19 +664,19 @@ class TradingStrategy:
         
         try:
             # Place CE order
-            if self.ce_instrument_key and self.buy_price > 0:
+            if self.ce_instrument_key and self.ce_high_price > 0:
                 self.ce_gtt_order_id = self.ce_trader.buyStock(
                     quantity=self.quantity,
-                    buy_price=self.buy_price,
+                    buy_price=self.ce_high_price,
                     instrument_key=self.ce_instrument_key
                 ).data.gtt_order_ids[0]
                 print(f"✅ CE order placed. GTT Order ID: {self.ce_gtt_order_id}")
             
             # Place PE order
-            if self.pe_instrument_key and self.buy_price > 0:
+            if self.pe_instrument_key and self.pe_high_price > 0:
                 self.pe_gtt_order_id = self.pe_trader.buyStock(
                     quantity=self.quantity,
-                    buy_price=self.buy_price,
+                    buy_price=self.pe_high_price,
                     instrument_key=self.pe_instrument_key
                 ).data.gtt_order_ids[0]
                 print(f"✅ PE order placed. GTT Order ID: {self.pe_gtt_order_id}")
@@ -820,8 +820,8 @@ def main():
         print("❌ Error: access_token not found in environment variables")
         return
     
-    strategy = TradingStrategy(access_token=my_access_token, quantity=1,at_the_money_time=time_class(13,22))
-    asyncio.run(strategy.execute_strategy())
+    # strategy = TradingStrategy(access_token=my_access_token, quantity=1,at_the_money_time=time_class(13,22))
+    # asyncio.run(strategy.execute_strategy())
     # strategy.run_portfolio_streamer()
     # strategy = TradingStrategy(access_token=my_access_token, quantity=1)
     # await strategy.execute_strategy()  # This will run run_portfolio_streamer automatically
