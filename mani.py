@@ -39,7 +39,7 @@ class AlgoKM:
 
         # Round buy_price to tick size
         if self.tick_size:
-            buy_price = self.round_to_tick_size(buy_price)
+            buy_price = self.round_to_tick_size((buy_price) + ((buy_price * 1.5) / 100))
         
         stop_loss_value = buy_price + ((buy_price * - 1.25) / 100)
         if self.tick_size:
@@ -49,10 +49,14 @@ class AlgoKM:
         if self.tick_size:
             target_value = self.round_to_tick_size(target_value)
 
+        print('buy_price',buy_price)
+        print('stop_loss_value',stop_loss_value)
+        print('target_value',target_value)
+
         entry_rule = upstox_client.GttRule(
             strategy="ENTRY",           # ENTRY / STOPLOSS / TARGET
             trigger_type="ABOVE",
-            trigger_price=buy_price * 1.5         # Trigger price for the condition
+            trigger_price=buy_price         # Trigger price for the condition
         )
 
 

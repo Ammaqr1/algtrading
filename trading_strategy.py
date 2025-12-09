@@ -90,7 +90,7 @@ class TradingStrategy:
         self.pe_instrument_key = None
         self.ce_high_price = 0
         self.pe_high_price = 0
-        self.total_high = 0
+        self.buy_price = 0
         self.ce_trader = None
         self.pe_trader = None
         
@@ -296,9 +296,9 @@ class TradingStrategy:
                             try:
                                 self.ce_gtt_order_id = self.ce_trader.buyStock(
                                     quantity=self.quantity,
-                                    buy_price=self.ce_high_price,
+                                    buy_price=self.buy_price,
                                     instrument_key=self.ce_instrument_key
-                                )
+                                ).data.gtt_order_ids[0]
                                 print(f"✅ CE re-entry order placed. GTT Order ID: {self.ce_gtt_order_id}")
                                 self.reentry_placed = True
                             except Exception as e:
@@ -309,9 +309,9 @@ class TradingStrategy:
                             try:
                                 self.pe_gtt_order_id = self.pe_trader.buyStock(
                                     quantity=self.quantity,
-                                    buy_price=self.pe_high_price,
+                                    buy_price=self.buy_price,
                                     instrument_key=self.pe_instrument_key
-                                )
+                                ).data.gtt_order_ids[0]
                                 print(f"✅ PE re-entry order placed. GTT Order ID: {self.pe_gtt_order_id}")
                                 self.reentry_placed = True
                             except Exception as e:
@@ -325,7 +325,7 @@ class TradingStrategy:
                             try:
                                 self.ce_gtt_order_id = self.ce_trader.buyStock(
                                     quantity=self.quantity,
-                                    buy_price=self.ce_high_price,
+                                    buy_price=self.buy_price,
                                     instrument_key=self.ce_instrument_key
                                 )
                                 print(f"✅ CE re-entry order placed. GTT Order ID: {self.ce_gtt_order_id}")
@@ -339,7 +339,7 @@ class TradingStrategy:
                             try:
                                 self.pe_gtt_order_id = self.pe_trader.buyStock(
                                     quantity=self.quantity,
-                                    buy_price=self.pe_high_price,
+                                    buy_price=self.buy_price,
                                     instrument_key=self.pe_instrument_key
                                 )
                                 print(f"✅ PE re-entry order placed. GTT Order ID: {self.pe_gtt_order_id}")
@@ -380,9 +380,9 @@ class TradingStrategy:
                         try:
                             self.ce_gtt_order_id = self.ce_trader.buyStock(
                                 quantity=self.quantity,
-                                buy_price=self.ce_high_price,
+                                buy_price=self.buy_price,
                                 instrument_key=self.ce_instrument_key
-                            )
+                            ).data.gtt_order_ids[0]
                             print(f"✅ CE re-entry order placed. GTT Order ID: {self.ce_gtt_order_id}")
                             self.ce_reentry_placed = True
                         except Exception as e:
@@ -393,9 +393,9 @@ class TradingStrategy:
                         try:
                             self.pe_gtt_order_id = self.pe_trader.buyStock(
                                 quantity=self.quantity,
-                                buy_price=self.pe_high_price,
+                                buy_price=self.buy_price,
                                 instrument_key=self.pe_instrument_key
-                            )
+                            ).data.gtt_order_ids[0]
                             print(f"✅ PE re-entry order placed. GTT Order ID: {self.pe_gtt_order_id}")
                             self.pe_reentry_placed = True
                         except Exception as e:
@@ -488,25 +488,24 @@ class TradingStrategy:
         print(f"📅 Expiry date: {expiry_date}")
         
         # Get option contracts
-        ce_ik, pe_ik = self.sensex_trader.get_option_contracts(
+        self.ce_instrument_key, self.pe_instrument_key = self.sensex_trader.get_option_contracts(
             sensex_price=sensex_price,
         )
         
-        self.ce_instrument_key = ce_ik
-        self.pe_instrument_key = pe_ik
         
-        print(f"✅ CE Instrument Key: {ce_ik}")
-        print(f"✅ PE Instrument Key: {pe_ik}")
+        
+        print(f"✅ CE Instrument Key: {self.ce_instrument_key}")
+        print(f"✅ PE Instrument Key: {self.pe_instrument_key}")
         
         # Initialize traders for CE and PE
         self.ce_trader = AlgoKM(
             access_token=self.access_token,
-            instrument_key=ce_ik,
+            instrument_key=self.ce_instrument_key,
             tick_size=True
         )
         self.pe_trader = AlgoKM(
             access_token=self.access_token,
-            instrument_key=pe_ik,
+            instrument_key=self.pe_instrument_key,
             tick_size=True
         )
         
@@ -561,6 +560,15 @@ class TradingStrategy:
 
                 silent = True
                 already_tracked = True
+
+                if not ce_data:
+                    print(f"❌ CE data not available")
+                    
+
+                if not pe_data:
+                    print(f"❌ PE data not available")
+                    
+
 
                 self.ce_high_price = self.sensex_trader.highest_price_per_minute(ce_data,self.start_time,self.end_time,self.ce_high_price)
                 self.pe_high_price = self.sensex_trader.highest_price_per_minute(pe_data,self.start_time,self.end_time,self.pe_high_price)
@@ -645,7 +653,7 @@ class TradingStrategy:
             print("❌ Cannot place orders: high prices not available")
             return
         
-        self.total_high = self.sensex_trader.highMarketValue(
+        self.buy_price = self.sensex_trader.highMarketValue(
             self.pe_high_price, self.ce_high_price
         )
     
@@ -656,21 +664,21 @@ class TradingStrategy:
         
         try:
             # Place CE order
-            if self.ce_instrument_key and self.total_high > 0:
+            if self.ce_instrument_key and self.buy_price > 0:
                 self.ce_gtt_order_id = self.ce_trader.buyStock(
                     quantity=self.quantity,
-                    buy_price=self.ce_high_price,
+                    buy_price=self.buy_price,
                     instrument_key=self.ce_instrument_key
-                )['data']['gtt_order_ids'][0]
+                ).data.gtt_order_ids[0]
                 print(f"✅ CE order placed. GTT Order ID: {self.ce_gtt_order_id}")
             
             # Place PE order
-            if self.pe_instrument_key and self.total_high > 0:
+            if self.pe_instrument_key and self.buy_price > 0:
                 self.pe_gtt_order_id = self.pe_trader.buyStock(
                     quantity=self.quantity,
-                    buy_price=self.pe_high_price,
+                    buy_price=self.buy_price,
                     instrument_key=self.pe_instrument_key
-                )['data']['gtt_order_ids'][0]
+                ).data.gtt_order_ids[0]
                 print(f"✅ PE order placed. GTT Order ID: {self.pe_gtt_order_id}")
                 
         except Exception as e:
@@ -709,7 +717,7 @@ class TradingStrategy:
                             quantity=self.quantity,
                             buy_price=self.ce_high_price,
                             instrument_key=self.ce_instrument_key
-                        )
+                        ).data.gtt_order_ids[0]
                         print(f"✅ CE re-entry order placed. GTT Order ID: {self.ce_gtt_order_id}")
                     
                     elif status == "Target Hit":
@@ -735,7 +743,7 @@ class TradingStrategy:
                             quantity=self.quantity,
                             buy_price=self.pe_high_price,
                             instrument_key=self.pe_instrument_key
-                        )
+                        ).data.gtt_order_ids[0]
                         print(f"✅ PE re-entry order placed. GTT Order ID: {self.pe_gtt_order_id}")
                     
                     elif status == "Target Hit":
