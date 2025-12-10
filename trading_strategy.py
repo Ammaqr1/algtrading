@@ -693,7 +693,7 @@ class TradingStrategy:
         
         try:
             # Place CE order
-            if self.ce_instrument_key and self.ce_high_price > 0:
+            if self.ce_instrument_key and self.ce_high_price > 0 and not self.ce_gtt_order_id:
                 self.ce_gtt_order_id = self.ce_trader.buyStock(
                     quantity=self.quantity,
                     buy_price=self.ce_high_price,
@@ -702,7 +702,7 @@ class TradingStrategy:
                 print(f"✅ CE order placed. GTT Order ID: {self.ce_gtt_order_id}")
             
             # Place PE order
-            if self.pe_instrument_key and self.pe_high_price > 0:
+            if self.pe_instrument_key and self.pe_high_price > 0 and not self.pe_gtt_order_id:
                 self.pe_gtt_order_id = self.pe_trader.buyStock(
                     quantity=self.quantity,
                     buy_price=self.pe_high_price,
@@ -778,14 +778,14 @@ def main():
         print("❌ Error: access_token not found in environment variables")
         return
     
-    # strategy = TradingStrategy(access_token=my_access_token, quantity=20,at_the_money_time=time_class(9,17),tick_size=True)
-    # asyncio.run(strategy.execute_strategy())
+    strategy = TradingStrategy(access_token=my_access_token, quantity=20,at_the_money_time=time_class(9,17),tick_size=True)
+    asyncio.run(strategy.execute_strategy())
     # strategy.run_portfolio_streamer()
     # strategy = TradingStrategy(access_token=my_access_token, quantity=1)
     # await strategy.execute_strategy()  # This will run run_portfolio_streamer automatically
     # time_module.sleep(60)  # Keep it running for testing
 
 
-# if __name__ == "__main__":
-#     main()
+if __name__ == "__main__":
+    main()
 
