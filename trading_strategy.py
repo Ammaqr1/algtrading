@@ -351,11 +351,41 @@ class TradingStrategy:
                     elif strategy == 'TARGET' and status in ['ACTIVE', 'TRIGGERED']:
                         if is_ce_order:
                             print(f"🎯 CE Target Hit! Order completed.")
+                    
                             self.ce_gtt_order_id = None  # Stop monitoring
+                            print('cancelling the PE order')
+                            response = self.ce_trader.cancel_gtt_order(self.pe_gtt_order_id)
+                            if response['status'] == 'success':
+                                print('the PE order is cancelled Our CE target is hit')
+                                return
+                            else:
+                                print('Error cancelling the PE order Retrying...')
+                                response = self.ce_trader.cancel_gtt_order(self.pe_gtt_order_id)
+                                if response['status'] == 'success':
+                                    print('the PE order is cancelled Our CE target is hit')
+                                    return
+                                else:
+                                    print('Error cancelling in the second attempt the PE order Retrying...')
+                                    print('Please cancel the PE order manually')
+                                    return
                         elif is_pe_order:
                             print(f"🎯 PE Target Hit! Order completed.")
                             self.pe_gtt_order_id = None  # Stop monitoring
-            
+                            print('cancelling the CE order')
+                            response = self.pe_trader.cancel_gtt_order(self.ce_gtt_order_id)
+                            if response['status'] == 'success':
+                                print('the CE order is cancelled Our PE target is hit')
+                                return
+                            else:
+                                print('Error cancelling the CE order Retrying...')
+                                response = self.pe_trader.cancel_gtt_order(self.ce_gtt_order_id)
+                                if response['status'] == 'success':
+                                    print('the CE order is cancelled Our PE target is hit')
+                                    return
+                                else:
+                                    print('Error cancelling in the second attempt the CE order Retrying...')
+                                    print('Please cancel the CE order manually')
+                                    return
             # Process regular order updates
             elif update_type == 'order':
                 order_ref_id = order_data.get('order_ref_id', '')

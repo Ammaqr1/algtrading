@@ -90,6 +90,10 @@ class AlgoKM:
             print("Exception when calling OrderApi->place_order: %s\n" % e)
 
 
+    def get_all_gtt_orders(self):
+        gtt_order = self.api_instance.get_gtt_order_details()
+        return gtt_order
+
     def sellStock(self,quantity,sell_price):
         # Round sell_price to tick size
         if self.tick_size:
@@ -552,6 +556,11 @@ class AlgoKM:
                 return candle[1]
         return None
 
+    def cancel_gtt_order(self,order_id):
+        body = upstox_client.GttCancelOrderRequest(gtt_order_id=order_id)
+        response = self.api_instance.cancel_gtt_order(body)
+        return response
+
 
         
 
@@ -620,11 +629,17 @@ def verify_access_token(access_token):
 # print(dat.get('ltpc', {})['ltp'])
 
 
+# data = am.get_all_gtt_orders()
+# print('this is the data of all gtt orders',data)
 
 # adata = am.buyStock(quantity=100,buy_price=255.0,instrument_key=instrument_key)
 # print(adata,'this is the adata')
 
 
+# response = am.cancel_gtt_order('GTT-C25101200006152')
+# print('this is the response of the cancel gtt order',response)
+# id = am.get_gtt_order_details('GTT-C25091200197924')
+# print(id)
 
 
 
