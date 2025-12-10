@@ -107,9 +107,9 @@ class TradingStrategy:
         if at_the_money_time is None:
             at_the_money_time = time_class(9, 17)  # 9:17 AM
         if start_time is None:
-            start_time = time_class(13 ,23)  # 9:17 AM
+            start_time = time_class(9 ,17)  # 9:17 AM
         if end_time is None:
-            end_time = time_class(13, 24)    # 9:30 AM
+            end_time = time_class(9, 30)    # 9:30 AM
         if exit_time is None:
             exit_time = time_class(15, 30)   # 3:30 PM
         
@@ -117,7 +117,7 @@ class TradingStrategy:
         self.start_time = start_time
         self.end_time = end_time
         self.exit_time = exit_time
-        print('self.end_time',self.end_time)
+       
 
         # Portfolio streamer for order tracking
         self.portfolio_streamer = None
@@ -578,6 +578,12 @@ class TradingStrategy:
             # Check if we've passed 9:30
             if now > self.end_time:
                 print(f"⏰ {self.end_time.strftime('%H:%M')} AM reached. Final high prices:")
+                ce_data = self.sensex_trader.intraday_history_per_minute(self.ce_instrument_key)
+                pe_data = self.sensex_trader.intraday_history_per_minute(self.pe_instrument_key)
+
+                self.ce_high_price = self.sensex_trader.highest_price_per_minute(ce_data,self.start_time,self.end_time,self.ce_high_price)
+                self.pe_high_price = self.sensex_trader.highest_price_per_minute(pe_data,self.start_time,self.end_time,self.pe_high_price)
+                already_tracked = True
                 print(f"   CE High: ₹{self.ce_high_price}")
                 print(f"   PE High: ₹{self.pe_high_price}")
                 break
@@ -606,13 +612,6 @@ class TradingStrategy:
 
             # Check exit time
             if now >= self.exit_time:
-                
-                ce_data = self.sensex_trader.intraday_history_per_minute(self.ce_instrument_key)
-                pe_data = self.sensex_trader.intraday_history_per_minute(self.pe_instrument_key)
-
-                self.ce_high_price = self.sensex_trader.highest_price_per_minute(ce_data,self.start_time,self.end_time,self.ce_high_price)
-                self.pe_high_price = self.sensex_trader.highest_price_per_minute(pe_data,self.start_time,self.end_time,self.pe_high_price)
-
                 print(f"⏰ Exit time {self.exit_time.strftime('%H:%M')} reached.")
                 already_tracked = True
 
@@ -620,7 +619,7 @@ class TradingStrategy:
             
             try:
                 await self.wait_until_time(self.start_time, silent=silent)
-             
+                already_tracked = True
                 silent = True
                     
                 # Receive message with timeout
@@ -714,78 +713,7 @@ class TradingStrategy:
         except Exception as e:
             print(f"❌ Error placing orders: {e}")
     
-    async def monitor_orders(self, websocket):
-        """
-        Monitor order status and handle re-entry logic.
-        
-        Args:
-            websocket: WebSocket connection
-        """
-        print("👀 Monitoring orders for stop loss and target hits...")
-        
-        while True:
-            now = datetime.now(self.ist).time()
-            
-            # Check exit time
-            if now >= self.exit_time:
-                print(f"⏰ Exit time {self.exit_time.strftime('%H:%M')} reached. Stopping monitoring.")
-                break
-            
-            # Check CE order status
-            if self.ce_gtt_order_id:
-                try:
-                    response = self.ce_trader.get_gtt_order_details(self.ce_gtt_order_id)
-                    status = self.ce_trader.check_gtt_status(response)
-                    
-                    if status == "Stop Loss Hit" and not self.ce_reentry_placed:
-                        print(f"🛑 CE Stop Loss Hit! Placing re-entry order...")
-                        self.ce_stoploss_hit_count += 1
-                        self.ce_reentry_placed = True
-                        
-                        # Place one more order
-                        self.ce_gtt_order_id = self.ce_trader.buyStock(
-                            quantity=self.quantity,
-                            buy_price=self.ce_high_price,
-                            instrument_key=self.ce_instrument_key
-                        ).data.gtt_order_ids[0]
-                        print(f"✅ CE re-entry order placed. GTT Order ID: {self.ce_gtt_order_id}")
-                    
-                    elif status == "Target Hit":
-                        print(f"🎯 CE Target Hit! Order completed.")
-                        self.ce_gtt_order_id = None  # Stop monitoring
-                    
-                except Exception as e:
-                    print(f"Error checking CE order status: {e}")
-            
-            # Check PE order status
-            if self.pe_gtt_order_id:
-                try:
-                    response = self.pe_trader.get_gtt_order_details(self.pe_gtt_order_id)
-                    status = self.pe_trader.check_gtt_status(response)
-                    
-                    if status == "Stop Loss Hit" and not self.pe_reentry_placed:
-                        print(f"🛑 PE Stop Loss Hit! Placing re-entry order...")
-                        self.pe_stoploss_hit_count += 1
-                        self.pe_reentry_placed = True
-                        
-                        # Place one more order
-                        self.pe_gtt_order_id = self.pe_trader.buyStock(
-                            quantity=self.quantity,
-                            buy_price=self.pe_high_price,
-                            instrument_key=self.pe_instrument_key
-                        ).data.gtt_order_ids[0]
-                        print(f"✅ PE re-entry order placed. GTT Order ID: {self.pe_gtt_order_id}")
-                    
-                    elif status == "Target Hit":
-                        print(f"🎯 PE Target Hit! Order completed.")
-                        self.pe_gtt_order_id = None  # Stop monitoring
-                    
-                except Exception as e:
-                    print(f"Error checking PE order status: {e}")
-            
-            # Sleep before next check
-            await asyncio.sleep(5)  # Check every 5 seconds
-    
+   
     async def execute_strategy(self):
         """Main strategy execution function."""
         print("=" * 60)
@@ -850,7 +778,7 @@ def main():
         print("❌ Error: access_token not found in environment variables")
         return
     
-    # strategy = TradingStrategy(access_token=my_access_token, quantity=1,at_the_money_time=time_class(13,22))
+    # strategy = TradingStrategy(access_token=my_access_token, quantity=20,at_the_money_time=time_class(9,17),tick_size=True)
     # asyncio.run(strategy.execute_strategy())
     # strategy.run_portfolio_streamer()
     # strategy = TradingStrategy(access_token=my_access_token, quantity=1)
