@@ -111,7 +111,7 @@ class TradingStrategy:
         if end_time is None:
             end_time = time_class(9, 30)    # 9:30 AM
         if exit_time is None:
-            exit_time = time_class(15, 30)   # 3:30 PM
+            exit_time = time_class(22, 30)   # 3:30 PM
         
         self.at_the_money_time = at_the_money_time
         self.start_time = start_time
@@ -318,7 +318,7 @@ class TradingStrategy:
                                 print(f"❌ Error placing PE re-entry order: {e}")
                     
                     # Check if STOPLOSS rule triggered
-                    elif strategy == 'STOPLOSS' and status in ['ACTIVE', 'TRIGGERED']:
+                    elif strategy == 'STOPLOSS' and status in ['ACTIVE', 'TRIGGERED','CANCELLED','COMPLETED']:
                         if is_ce_order and not self.ce_reentry_placed:
                             print(f"🛑 CE Stop Loss Hit! Placing re-entry order...")
                             self.ce_stoploss_hit_count += 1
@@ -348,7 +348,7 @@ class TradingStrategy:
                                 print(f"❌ Error placing PE re-entry order: {e}")
                     
                     # Check if TARGET rule triggered
-                    elif strategy == 'TARGET' and status in ['ACTIVE', 'TRIGGERED']:
+                    elif strategy == 'TARGET' and status in ['ACTIVE', 'TRIGGERED','COMPLETED']:
                         if is_ce_order:
                             print(f"🎯 CE Target Hit! Order completed.")
                     
