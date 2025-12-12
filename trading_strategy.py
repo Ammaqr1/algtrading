@@ -264,6 +264,12 @@ class TradingStrategy:
         Args:
             order_data: Order update data from portfolio streamer
         """
+
+        stoploss_index = 0
+        target_index = 0
+        entry_index = 0
+
+
         try:
             update_type = order_data.get('update_type', '')
             
@@ -279,130 +285,140 @@ class TradingStrategy:
                 if not (is_ce_order or is_pe_order):
                     # Not our order, skip
                     return
-                
-                # Check rules for ENTRY status
-                for rule in rules:
-                    strategy = rule.get('strategy', '')
-                    status = rule.get('status', '')
+
+
+                for i,data in enumerate(rules):
+                    if data['strategy'] == 'STOPLOSS':
+                        stoploss_index = i
+                    elif data['strategy'] == 'TARGET':
+                        target_index = i
+                    elif data['strategy'] == 'ENTRY':
+                        entry_index = i
+
+
+                stoploss_rule = rules[stoploss_index]
+                target_rule = rules[target_index]
+                entry_rule = rules[entry_index]
+
+
+
+                if entry_rule['strategy'] == 'ENTRY' and entry_rule['status'] == 'FAILED':
+                    message = entry_rule.get('message', '')
+                    print(f"❌ GTT Order {gtt_order_id} ENTRY rule FAILED: {message}")
                     
-                    # Check if ENTRY rule failed
-                    if strategy == 'ENTRY' and status == 'FAILED':
-                        message = rule.get('message', '')
-                        print(f"❌ GTT Order {gtt_order_id} ENTRY rule FAILED: {message}")
-                        
-                        # Handle re-entry based on which order failed
-                        if is_ce_order and not self.reentry_placed:
-                            print(f"🔄 Attempting CE re-entry for failed order...")
+                    # Handle re-entry based on which order failed
+                    if is_ce_order and not self.reentry_placed:
+                        print(f"🔄 Attempting CE re-entry for failed order...")
+                        try:
+                            self.ce_gtt_order_id = self.ce_trader.buyStock(
+                                quantity=self.quantity,
+                                buy_price=self.ce_high_price,
+                                instrument_key=self.ce_instrument_key
+                            ).data.gtt_order_ids[0]
+                            print(f"✅ CE re-entry order placed. GTT Order ID: {self.ce_gtt_order_id}")
+                            self.reentry_placed = True
+                        except Exception as e:
+                            print(f"❌ Error placing CE re-entry order: {e}")
+                    
+                    elif is_pe_order and not self.reentry_placed:
+                        print(f"🔄 Attempting PE re-entry for failed order...")
+                        try:
+                            self.pe_gtt_order_id = self.pe_trader.buyStock(
+                                quantity=self.quantity,
+                                buy_price=self.pe_high_price,
+                                instrument_key=self.pe_instrument_key
+                            ).data.gtt_order_ids[0]
+                            print(f"✅ PE re-entry order placed. GTT Order ID: {self.pe_gtt_order_id}")
+                            self.reentry_placed = True
+                        except Exception as e:
+                            print(f"❌ Error placing PE re-entry order: {e}")
+                
+                # Check if STOPLOSS rule triggered
+                elif stoploss_rule['status'] in ['ACTIVE', 'TRIGGERED','CANCELLED','COMPLETED'] and target_rule['status'] == 'CANCELLED':
+
+                    if is_ce_order:
+                        self.ce_stoploss_hit_count += 1
+                        if self.ce_stoploss_hit_count + self.pe_stoploss_hit_count == 2:
+                            self.sensex_trader.cancel_gtt_order(self.pe_gtt_order_id)
+                            print('The pure 9:17 execution run sucessfully')
+                            return
+
+                        if not self.reentry_placed:
+                            print(f"🛑 CE Stop Loss Hit! Placing re-entry order...")
                             try:
                                 self.ce_gtt_order_id = self.ce_trader.buyStock(
                                     quantity=self.quantity,
                                     buy_price=self.ce_high_price,
                                     instrument_key=self.ce_instrument_key
-                                ).data.gtt_order_ids[0]
+                                )
                                 print(f"✅ CE re-entry order placed. GTT Order ID: {self.ce_gtt_order_id}")
                                 self.reentry_placed = True
+                                self.ce_reentry_placed = True
                             except Exception as e:
                                 print(f"❌ Error placing CE re-entry order: {e}")
                         
-                        elif is_pe_order and not self.reentry_placed:
-                            print(f"🔄 Attempting PE re-entry for failed order...")
+                    elif is_pe_order:
+
+                        self.pe_stoploss_hit_count += 1
+                        if self.pe_stoploss_hit_count + self.ce_stoploss_hit_count == 2:
+                            self.sensex_trader.cancel_gtt_order(self.ce_gtt_order_id)
+                            print('The Pure 9:17 execution run succesfully')
+                            return
+
+                        if not self.reentry_placed:
+                            print(f"🛑 PE Stop Loss Hit! Placing re-entry order...")
                             try:
                                 self.pe_gtt_order_id = self.pe_trader.buyStock(
                                     quantity=self.quantity,
                                     buy_price=self.pe_high_price,
                                     instrument_key=self.pe_instrument_key
-                                ).data.gtt_order_ids[0]
+                                )
                                 print(f"✅ PE re-entry order placed. GTT Order ID: {self.pe_gtt_order_id}")
                                 self.reentry_placed = True
+                                self.pe_reentry_placed = True
                             except Exception as e:
                                 print(f"❌ Error placing PE re-entry order: {e}")
-                    
-                    # Check if STOPLOSS rule triggered
-                    elif strategy == 'STOPLOSS' and status in ['ACTIVE', 'TRIGGERED','CANCELLED','COMPLETED']:
-
-                        if is_ce_order:
-                            self.ce_stoploss_hit_count += 1
-                            if self.ce_stoploss_hit_count + self.pe_stoploss_hit_count == 2:
-                                self.sensex_trader.cancel_gtt_order(self.pe_gtt_order_id)
-                                print('The pure 9:17 execution run sucessfully')
-                                return
-
-                            if not self.reentry_placed:
-                                print(f"🛑 CE Stop Loss Hit! Placing re-entry order...")
-                                try:
-                                    self.ce_gtt_order_id = self.ce_trader.buyStock(
-                                        quantity=self.quantity,
-                                        buy_price=self.ce_high_price,
-                                        instrument_key=self.ce_instrument_key
-                                    )
-                                    print(f"✅ CE re-entry order placed. GTT Order ID: {self.ce_gtt_order_id}")
-                                    self.reentry_placed = True
-                                    self.ce_reentry_placed = True
-                                except Exception as e:
-                                    print(f"❌ Error placing CE re-entry order: {e}")
-                            
-                        elif is_pe_order:
-                            
-                            self.pe_stoploss_hit_count += 1
-                            if self.pe_stoploss_hit_count + self.ce_stoploss_hit_count == 2:
-                                self.sensex_trader.cancel_gtt_order(self.ce_gtt_order_id)
-                                print('The Pure 9:17 execution run succesfully')
-                                return
-
-                            if not self.reentry_placed:
-                                print(f"🛑 PE Stop Loss Hit! Placing re-entry order...")
-                                try:
-                                    self.pe_gtt_order_id = self.pe_trader.buyStock(
-                                        quantity=self.quantity,
-                                        buy_price=self.pe_high_price,
-                                        instrument_key=self.pe_instrument_key
-                                    )
-                                    print(f"✅ PE re-entry order placed. GTT Order ID: {self.pe_gtt_order_id}")
-                                    self.reentry_placed = True
-                                    self.pe_reentry_placed = True
-                                except Exception as e:
-                                    print(f"❌ Error placing PE re-entry order: {e}")
-                    
-                    # Check if TARGET rule triggered
-                    elif strategy == 'TARGET' and status in ['ACTIVE', 'TRIGGERED','COMPLETED']:
-                        if is_ce_order:
-                            print(f"🎯 CE Target Hit! Order completed.")
-                            self.reentry_placed = True
-                            self.ce_gtt_order_id = None  # Stop monitoring
-                            print('cancelling the PE order')
+                
+                # Check if TARGET rule triggered
+                elif target_rule['strategy'] == 'TARGET' and target_rule['status'] in ['ACTIVE', 'TRIGGERED','COMPLETED']:
+                    if is_ce_order:
+                        print(f"🎯 CE Target Hit! Order completed.")
+                        self.reentry_placed = True
+                        self.ce_gtt_order_id = None  # Stop monitoring
+                        print('cancelling the PE order')
+                        response = self.ce_trader.cancel_gtt_order(self.pe_gtt_order_id)
+                        if response['status'] == 'success':
+                            print('the PE order is cancelled Our CE target is hit')
+                            return
+                        else:
+                            print('Error cancelling the PE order Retrying...')
                             response = self.ce_trader.cancel_gtt_order(self.pe_gtt_order_id)
                             if response['status'] == 'success':
                                 print('the PE order is cancelled Our CE target is hit')
                                 return
                             else:
-                                print('Error cancelling the PE order Retrying...')
-                                response = self.ce_trader.cancel_gtt_order(self.pe_gtt_order_id)
-                                if response['status'] == 'success':
-                                    print('the PE order is cancelled Our CE target is hit')
-                                    return
-                                else:
-                                    print('Error cancelling in the second attempt the PE order Retrying...')
-                                    print('Please cancel the PE order manually')
-                                    return
-                        elif is_pe_order:
-                            print(f"🎯 PE Target Hit! Order completed.")
-                            self.reentry_placed = True
-                            self.pe_gtt_order_id = None  # Stop monitoring
-                            print('cancelling the CE order')
+                                print('Error cancelling in the second attempt the PE order Retrying...')
+                                print('Please cancel the PE order manually')
+                                return
+                    elif is_pe_order:
+                        print(f"🎯 PE Target Hit! Order completed.")
+                        self.reentry_placed = True
+                        self.pe_gtt_order_id = None  # Stop monitoring
+                        print('cancelling the CE order')
+                        response = self.pe_trader.cancel_gtt_order(self.ce_gtt_order_id)
+                        if response['status'] == 'success':
+                            print('the CE order is cancelled Our PE target is hit')
+                            return
+                        else:
+                            print('Error cancelling the CE order Retrying...')
                             response = self.pe_trader.cancel_gtt_order(self.ce_gtt_order_id)
                             if response['status'] == 'success':
                                 print('the CE order is cancelled Our PE target is hit')
                                 return
                             else:
-                                print('Error cancelling the CE order Retrying...')
-                                response = self.pe_trader.cancel_gtt_order(self.ce_gtt_order_id)
-                                if response['status'] == 'success':
-                                    print('the CE order is cancelled Our PE target is hit')
-                                    return
-                                else:
-                                    print('Error cancelling in the second attempt the CE order Retrying...')
-                                    print('Please cancel the CE order manually')
-                                    return
+                                print('Error cancelling in the second attempt the CE order Retrying...')
+                                print('Please cancel the CE order manually')
+                                return
             # Process regular order updates
             # elif update_type == 'order':
             #     order_ref_id = order_data.get('order_ref_id', '')
@@ -795,8 +811,8 @@ def main():
         print("❌ Error: access_token not found in environment variables")
         return
     
-    # strategy = TradingStrategy(access_token=my_access_token, quantity=20,at_the_money_time=time_class(9,17),tick_size=True)
-    # asyncio.run(strategy.execute_strategy())
+    strategy = TradingStrategy(access_token=my_access_token, quantity=20,at_the_money_time=time_class(9,17),tick_size=True)
+    asyncio.run(strategy.execute_strategy())
     # strategy.run_portfolio_streamer()
     # strategy = TradingStrategy(access_token=my_access_token, quantity=1)
     # await strategy.execute_strategy()  # This will run run_portfolio_streamer automatically
