@@ -788,12 +788,12 @@ class TradingStrategy:
                     await self.track_high_prices(websocket)
 
                 # Step 4: Place orders after 9:30
-                self.place_option_orders()
+                # self.place_option_orders()
                 
                  # Step 5: Monitor orders for stop loss/target hits (run both monitoring functions concurrently)
-                await asyncio.gather(
-                    self.monitor_portfolio_updates()
-                )
+                # await asyncio.gather(
+                #     self.monitor_portfolio_updates()
+                # )
                 
         except Exception as e:
             print(f"❌ Error in strategy execution: {e}")
