@@ -107,9 +107,9 @@ class TradingStrategy:
         if at_the_money_time is None:
             at_the_money_time = time_class(9, 17)  # 9:17 AM
         if start_time is None:
-            start_time = time_class(9 ,17)  # 9:17 AM
+            start_time = time_class(10 ,33)  # 9:17 AM
         if end_time is None:
-            end_time = time_class(9, 30)    # 9:30 AM
+            end_time = time_class(12, 50)    # 9:30 AM
         if exit_time is None:
             exit_time = time_class(22, 30)   # 3:30 PM
         
@@ -350,7 +350,7 @@ class TradingStrategy:
                                     quantity=self.quantity,
                                     buy_price=self.ce_high_price,
                                     instrument_key=self.ce_instrument_key
-                                )
+                                ).data.gtt_order_ids[0]
                                 print(f"✅ CE re-entry order placed. GTT Order ID: {self.ce_gtt_order_id}")
                                 self.reentry_placed = True
                                 self.ce_reentry_placed = True
@@ -372,7 +372,7 @@ class TradingStrategy:
                                     quantity=self.quantity,
                                     buy_price=self.pe_high_price,
                                     instrument_key=self.pe_instrument_key
-                                )
+                                ).data.gtt_order_ids[0]
                                 print(f"✅ PE re-entry order placed. GTT Order ID: {self.pe_gtt_order_id}")
                                 self.reentry_placed = True
                                 self.pe_reentry_placed = True
