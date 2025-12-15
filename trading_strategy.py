@@ -112,6 +112,8 @@ class TradingStrategy:
             end_time = time_class(12, 50)    # 9:30 AM
         if exit_time is None:
             exit_time = time_class(22, 30)   # 3:30 PM
+
+   
         
         self.at_the_money_time = at_the_money_time
         self.start_time = start_time
@@ -611,7 +613,7 @@ class TradingStrategy:
             now = datetime.now(self.ist).time()
             
             # Check if we've passed 9:30
-            if now > self.end_time:
+            if now > (time_class(self.start_time.hour,(self.start_time.minute + 1) % 60)):
                 print(f"⏰ {self.end_time.strftime('%H:%M')} reached. Final high prices:")
                 if not already_tracked:
                     ce_data = self.sensex_trader.intraday_history_per_minute(self.ce_instrument_key)
@@ -655,7 +657,7 @@ class TradingStrategy:
             
 
             try:
-                # await self.wait_until_time(self.start_time, silent=silent)
+                await self.wait_until_time(self.start_time, silent=silent)
                 already_tracked = True
                 silent = True
                     
