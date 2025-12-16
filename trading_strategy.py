@@ -107,9 +107,9 @@ class TradingStrategy:
         if at_the_money_time is None:
             at_the_money_time = time_class(9, 17)  # 9:17 AM
         if start_time is None:
-            start_time = time_class(10,33)  # 9:17 AM
+            start_time = time_class(12,15)  # 9:17 AM
         if end_time is None:
-            end_time = time_class(10, 38)    # 9:30 AM
+            end_time = time_class(12, 16)    # 9:30 AM
         if exit_time is None:
             exit_time = time_class(22, 30)   # 3:30 PM
 
@@ -586,6 +586,9 @@ class TradingStrategy:
             pe_ik: PE instrument key
         """
         print(f"📈 Tracking high prices for CE and PE from {self.start_time.strftime('%H:%M')} to {self.end_time.strftime('%H:%M')}...")
+        silent = True
+        await self.wait_until_time(self.start_time, silent=silent)
+
         
         # Subscribe to both CE and PE feeds
         data = {
@@ -657,7 +660,6 @@ class TradingStrategy:
             
 
             try:
-                await self.wait_until_time(self.start_time, silent=silent)
                 already_tracked = True
                 silent = True
                     
@@ -819,6 +821,6 @@ def main():
     # time_module.sleep(60)  # Keep it running for testing
 
 
-# if __name__ == "__main__":
-#     main()
+if __name__ == "__main__":
+    main()
 
