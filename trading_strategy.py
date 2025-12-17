@@ -107,11 +107,13 @@ class TradingStrategy:
         if at_the_money_time is None:
             at_the_money_time = time_class(9, 17)  # 9:17 AM
         if start_time is None:
-            start_time = time_class(10 ,33)  # 9:17 AM
+            start_time = time_class(12,15)  # 9:17 AM
         if end_time is None:
-            end_time = time_class(12, 50)    # 9:30 AM
+            end_time = time_class(12, 16)    # 9:30 AM
         if exit_time is None:
             exit_time = time_class(22, 30)   # 3:30 PM
+
+   
         
         self.at_the_money_time = at_the_money_time
         self.start_time = start_time
@@ -584,6 +586,9 @@ class TradingStrategy:
             pe_ik: PE instrument key
         """
         print(f"📈 Tracking high prices for CE and PE from {self.start_time.strftime('%H:%M')} to {self.end_time.strftime('%H:%M')}...")
+        silent = True
+        await self.wait_until_time(self.start_time, silent=silent)
+
         
         # Subscribe to both CE and PE feeds
         data = {
@@ -599,24 +604,27 @@ class TradingStrategy:
         
         self.ce_high_price = 0
         self.pe_high_price = 0
-        current_time_ms = self.sensex_trader.get_today_start_timestamp_ms(self.start_time) + 60000
         
         
         # Track until 9:30
         already_tracked = False
         silent = False
+        
+        last_ce_30_seconds = time_module.time()
+        last_pe_30_seconds = time_module.time()
         while True:
             now = datetime.now(self.ist).time()
-            
+        
             # Check if we've passed 9:30
-            if now > self.end_time:
-                print(f"⏰ {self.end_time.strftime('%H:%M')} AM reached. Final high prices:")
-                ce_data = self.sensex_trader.intraday_history_per_minute(self.ce_instrument_key)
-                pe_data = self.sensex_trader.intraday_history_per_minute(self.pe_instrument_key)
+            if now > (time_class(self.end_time.hour,(self.end_time.minute + 1) % 60)):
+                print(f"⏰ {self.end_time.strftime('%H:%M')} reached. Final high prices:")
+                if not already_tracked:
+                    ce_data = self.sensex_trader.intraday_history_per_minute(self.ce_instrument_key)
+                    pe_data = self.sensex_trader.intraday_history_per_minute(self.pe_instrument_key)
 
-                self.ce_high_price = self.sensex_trader.highest_price_per_minute(ce_data,self.start_time,self.end_time,self.ce_high_price)
-                self.pe_high_price = self.sensex_trader.highest_price_per_minute(pe_data,self.start_time,self.end_time,self.pe_high_price)
-                already_tracked = True
+                    self.ce_high_price = self.sensex_trader.highest_price_per_minute(ce_data,self.start_time,self.end_time,self.ce_high_price)
+                    self.pe_high_price = self.sensex_trader.highest_price_per_minute(pe_data,self.start_time,self.end_time,self.pe_high_price)
+                    already_tracked = True
                 print(f"   CE High: ₹{self.ce_high_price}")
                 print(f"   PE High: ₹{self.pe_high_price}")
                 break
@@ -650,8 +658,8 @@ class TradingStrategy:
 
                 break
             
+
             try:
-                await self.wait_until_time(self.start_time, silent=silent)
                 already_tracked = True
                 silent = True
                     
@@ -660,22 +668,17 @@ class TradingStrategy:
                 decoded_data = decode_protobuf(message)
                 data_dict = MessageToDict(decoded_data)
                 
-                now_ms = self.sensex_trader.get_today_start_timestamp_ms(now)
-                
-                
                 # Extract prices for CE
                 if 'feeds' in data_dict and self.ce_instrument_key in data_dict['feeds']:
                     
                     data_ce_ik = self.sensex_trader.extract_i1_ohlc(data_dict,self.ce_instrument_key)
                     ce_ltp = data_ce_ik.get('ltpc', {})['ltp']
+
                     
-                    
-                    
-                    
-                    if int(data_ce_ik['ohlc_i1']['ts'])<= now_ms <= current_time_ms:
+                    if time_module.time() - last_ce_30_seconds >= 30:
+                        last_ce_30_seconds = time_module.time()
                         self.ce_high_price = self.sensex_trader.highMarketValue(
                             self.ce_high_price, data_ce_ik['ohlc_i1']['high'])  
-                        
 
                     if ce_ltp > 0:
                         self.ce_high_price = self.sensex_trader.highMarketValue(
@@ -687,10 +690,9 @@ class TradingStrategy:
                     
                     data_pe_ik = self.sensex_trader.extract_i1_ohlc(data_dict,self.pe_instrument_key)
                     pe_ltp = data_pe_ik.get('ltpc', {})['ltp']
-                    
                 
-                
-                    if int(data_pe_ik['ohlc_i1']['ts']) <= now_ms <= current_time_ms:
+                    if time_module.time() - last_pe_30_seconds >= 30:   
+                        last_pe_30_seconds = time_module.time()
                         self.pe_high_price = self.sensex_trader.highMarketValue(
                             self.pe_high_price, data_pe_ik['ohlc_i1']['high'])  
                             
@@ -779,7 +781,7 @@ class TradingStrategy:
                 if not self.sensex_price_at_917:
                     sensex_price = await self.capture_sensex_price_at_917(websocket)
           
-                
+                print('sensex price at 917',sensex_price)
                 # Step 2: Get option contracts
                 self.get_option_contracts_for_price(sensex_price)
                 
@@ -788,12 +790,12 @@ class TradingStrategy:
                     await self.track_high_prices(websocket)
 
                 # Step 4: Place orders after 9:30
-                self.place_option_orders()
+                # self.place_option_orders()
                 
                  # Step 5: Monitor orders for stop loss/target hits (run both monitoring functions concurrently)
-                await asyncio.gather(
-                    self.monitor_portfolio_updates()
-                )
+                # await asyncio.gather(
+                #     self.monitor_portfolio_updates()
+                # )
                 
         except Exception as e:
             print(f"❌ Error in strategy execution: {e}")
