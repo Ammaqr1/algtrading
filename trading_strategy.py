@@ -107,9 +107,9 @@ class TradingStrategy:
         if at_the_money_time is None:
             at_the_money_time = time_class(9, 17)  # 9:17 AM
         if start_time is None:
-            start_time = time_class(12,15)  # 9:17 AM
+            start_time = time_class(13,8)  # 9:17 AM
         if end_time is None:
-            end_time = time_class(12, 16)    # 9:30 AM
+            end_time = time_class(13, 9)    # 9:30 AM
         if exit_time is None:
             exit_time = time_class(22, 30)   # 3:30 PM
 
@@ -673,12 +673,14 @@ class TradingStrategy:
                     
                     data_ce_ik = self.sensex_trader.extract_i1_ohlc(data_dict,self.ce_instrument_key)
                     ce_ltp = data_ce_ik.get('ltpc', {})['ltp']
+                    print('ce ltp',ce_ltp)
 
                     
-                    if time_module.time() - last_ce_30_seconds >= 30:
+                    if time_module.time() - last_ce_30_seconds >= 30 and now >= (time_class(self.start_time.hour,(self.start_time.minute + 1) % 60)):
                         last_ce_30_seconds = time_module.time()
                         self.ce_high_price = self.sensex_trader.highMarketValue(
                             self.ce_high_price, data_ce_ik['ohlc_i1']['high'])  
+                        print('data cek',data_ce_ik)
 
                     if ce_ltp > 0:
                         self.ce_high_price = self.sensex_trader.highMarketValue(
@@ -691,7 +693,7 @@ class TradingStrategy:
                     data_pe_ik = self.sensex_trader.extract_i1_ohlc(data_dict,self.pe_instrument_key)
                     pe_ltp = data_pe_ik.get('ltpc', {})['ltp']
                 
-                    if time_module.time() - last_pe_30_seconds >= 30:   
+                    if time_module.time() - last_pe_30_seconds >= 30 and now >= (time_class(self.start_time.hour,(self.start_time.minute + 1) % 60)):   
                         last_pe_30_seconds = time_module.time()
                         self.pe_high_price = self.sensex_trader.highMarketValue(
                             self.pe_high_price, data_pe_ik['ohlc_i1']['high'])  
@@ -821,6 +823,6 @@ def main():
     # time_module.sleep(60)  # Keep it running for testing
 
 
-# if __name__ == "__main__":
-#     main()
+if __name__ == "__main__":
+    main()
 
