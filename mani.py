@@ -356,6 +356,13 @@ class AlgoKM:
             # Find the next Thursday
             thursday_date = today + timedelta(days=days_until_thursday)
 
+        url = f'https://api.upstox.com/v2/market/holidays/{thursday_date.strftime('%Y-%m-%d')}'
+        headers = {'Accept': 'application/json'}
+        response = requests.get(url=url, headers=headers, timeout=10)
+        response_data = response.json()
+        if 'BSE' in response_data['data'][0].get('closed_exchanges'):
+            thursday_date = thursday_date + timedelta(days=-1)
+
         return thursday_date.strftime('%Y-%m-%d')
     
 
@@ -424,7 +431,7 @@ class AlgoKM:
             # Extract data
             data = response_dict.get('data', [])
             if not data:
-                raise ValueError(f"No option contracts found for {instrument_key} on {self.get_thursday_date().strftime('%Y-%m-%d')}")
+                raise ValueError(f"No option contracts found for {instrument_key} on {self.get_thursday_date()}")
             
             # Create DataFrame
             df = pd.DataFrame(data)

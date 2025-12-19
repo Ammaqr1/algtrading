@@ -107,9 +107,9 @@ class TradingStrategy:
         if at_the_money_time is None:
             at_the_money_time = time_class(9, 17)  # 9:17 AM
         if start_time is None:
-            start_time = time_class(13,8)  # 9:17 AM
+            start_time = time_class(9,17)  # 9:17 AM
         if end_time is None:
-            end_time = time_class(13, 9)    # 9:30 AM
+            end_time = time_class(9, 30)    # 9:30 AM
         if exit_time is None:
             exit_time = time_class(22, 30)   # 3:30 PM
 
@@ -783,7 +783,6 @@ class TradingStrategy:
                 if not self.sensex_price_at_917:
                     sensex_price = await self.capture_sensex_price_at_917(websocket)
           
-                print('sensex price at 917',sensex_price)
                 # Step 2: Get option contracts
                 self.get_option_contracts_for_price(sensex_price)
                 
