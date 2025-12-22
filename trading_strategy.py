@@ -102,7 +102,8 @@ class TradingStrategy:
         self.ce_reentry_placed = False
         self.pe_reentry_placed = False
         self.reentry_placed = False
-        
+        self.ce_normal_order_id = None
+        self.pe_normal_order_id = None
         # Time windows - use provided times or defaults
         if at_the_money_time is None:
             at_the_money_time = time_class(9, 17)  # 9:17 AM
@@ -247,7 +248,8 @@ class TradingStrategy:
                 # Wait for message with timeout
                 try:
                     order_data = self.portfolio_update_queue.get(timeout=1.0)
-                    await self.process_portfolio_update(order_data)
+                    result = await self.process_portfolio_update(order_data)
+                    return result
                 except queue.Empty:
                     # Timeout is expected, continue monitoring
                     continue
@@ -422,49 +424,58 @@ class TradingStrategy:
                                 print('Please cancel the CE order manually')
                                 return
             # Process regular order updates
-            # elif update_type == 'order':
-            #     order_ref_id = order_data.get('order_ref_id', '')
-            #     status = order_data.get('status', '').lower()
+            elif update_type == 'order':
+                order_ref_id = order_data.get('order_ref_id', '')
+                status = order_data.get('status', '').lower()
                 
-            #     # Check if this order matches our GTT orders
-            #     is_ce_order = (self.ce_gtt_order_id and order_ref_id == self.ce_gtt_order_id)
-            #     is_pe_order = (self.pe_gtt_order_id and order_ref_id == self.pe_gtt_order_id)
+                # Check if this order matches our GTT orders
+                is_ce_normal_order = (self.ce_normal_order_id and order_ref_id == self.ce_normal_order_id)
+                is_pe_normal_order = (self.pe_normal_order_id and order_ref_id == self.pe_normal_order_id)
                 
-            #     if not (is_ce_order or is_pe_order):
-            #         # Not our order, skip
-            #         return
+                if not (is_ce_order or is_pe_order):
+                    # Not our order, skip
+                    return
                 
-            #     # Check if order was rejected
-            #     if status == 'rejected':
-            #         status_message = order_data.get('status_message', '')
-            #         print(f"❌ Order {order_ref_id} REJECTED: {status_message}")
+                # Check if order was rejected
+                if status == 'rejected' and is_ce_normal_order:
+                    status_message = order_data.get('status_message', '')
+                    print(f"❌ Order {order_ref_id} REJECTED: {status_message}")
+                    return 'CE_REJECTED'
+                elif status == 'complete' and is_ce_normal_order:
+                    return 'CE_COMPLETED'
+                elif status == 'rejected' and is_pe_normal_order:
+                    status_message = order_data.get('status_message', '')
+                    print(f"❌ Order {order_ref_id} REJECTED: {status_message}")
+                    return 'PE_REJECTED'
+                elif status == 'complete' and is_pe_normal_order:
+                    return 'PE_COMPLETED'
                     
-            #         # Handle re-entry for rejected orders
-            #         if is_ce_order and not self.ce_reentry_placed:
-            #             print(f"🔄 Attempting CE re-entry for rejected order...")
-            #             try:
-            #                 self.ce_gtt_order_id = self.ce_trader.buyStock(
-            #                     quantity=self.quantity,
-            #                     buy_price=self.buy_price,
-            #                     instrument_key=self.ce_instrument_key
-            #                 ).data.gtt_order_ids[0]
-            #                 print(f"✅ CE re-entry order placed. GTT Order ID: {self.ce_gtt_order_id}")
-            #                 self.ce_reentry_placed = True
-            #             except Exception as e:
-            #                 print(f"❌ Error placing CE re-entry order: {e}")
+                    # Handle re-entry for rejected orders
+                    # if is_ce_order and not self.ce_reentry_placed:
+                    #     print(f"🔄 Attempting CE re-entry for rejected order...")
+                    #     try:
+                    #         self.ce_gtt_order_id = self.ce_trader.buyStock(
+                    #             quantity=self.quantity,
+                    #             buy_price=self.buy_price,
+                    #             instrument_key=self.ce_instrument_key
+                    #         ).data.gtt_order_ids[0]
+                    #         print(f"✅ CE re-entry order placed. GTT Order ID: {self.ce_gtt_order_id}")
+                    #         self.ce_reentry_placed = True
+                    #     except Exception as e:
+                    #         print(f"❌ Error placing CE re-entry order: {e}")
                     
-            #         elif is_pe_order and not self.pe_reentry_placed:
-            #             print(f"🔄 Attempting PE re-entry for rejected order...")
-            #             try:
-            #                 self.pe_gtt_order_id = self.pe_trader.buyStock(
-            #                     quantity=self.quantity,
-            #                     buy_price=self.buy_price,
-            #                     instrument_key=self.pe_instrument_key
-            #                 ).data.gtt_order_ids[0]
-            #                 print(f"✅ PE re-entry order placed. GTT Order ID: {self.pe_gtt_order_id}")
-            #                 self.pe_reentry_placed = True
-            #             except Exception as e:
-            #                 print(f"❌ Error placing PE re-entry order: {e}")
+                    # elif is_pe_order and not self.pe_reentry_placed:
+                    #     print(f"🔄 Attempting PE re-entry for rejected order...")
+                    #     try:
+                    #         self.pe_gtt_order_id = self.pe_trader.buyStock(
+                    #             quantity=self.quantity,
+                    #             buy_price=self.buy_price,
+                    #             instrument_key=self.pe_instrument_key
+                    #         ).data.gtt_order_ids[0]
+                    #         print(f"✅ PE re-entry order placed. GTT Order ID: {self.pe_gtt_order_id}")
+                    #         self.pe_reentry_placed = True
+                    #     except Exception as e:
+                    #         print(f"❌ Error placing PE re-entry order: {e}")
                 
         except Exception as e:
             print(f"Error processing portfolio update: {e}")
@@ -717,11 +728,6 @@ class TradingStrategy:
             print("❌ Cannot place orders: high prices not available")
             return
         
-        self.buy_price = self.sensex_trader.highMarketValue(
-            self.pe_high_price, self.ce_high_price
-        )
-    
-        
         print(f"📝 Placing orders at high prices:")
         print(f"   CE: ₹{self.ce_high_price} (quantity: {self.quantity})")
         print(f"   PE: ₹{self.pe_high_price} (quantity: {self.quantity})")
@@ -748,7 +754,85 @@ class TradingStrategy:
         except Exception as e:
             print(f"❌ Error placing orders: {e}")
     
-   
+    async def normal_order_execution(self, websocket, ce_buy_price, pe_buy_price, ce_intrument_ke=None, pe_intrument_key=None):
+
+        if ce_intrument_key is None:
+            ce_intrument_key = self.ce_instrument_key
+        if pe_intrument_key is None:
+            pe_intrument_key = self.pe_instrument_key
+
+        ce_price = ce_buy_price +  (ce_buy_price * 1.5) / 100
+        pe_price = pe_buy_price + (pe_buy_price * 1.5) / 100
+
+
+        data = {
+            "guid": "normal_order_sub",
+            "method": "sub",
+            "data": {
+                "mode": "ltpc",
+                "instrumentKeys": [ce_intrument_key, pe_intrument_key]
+            }
+        }
+        binary_data = json.dumps(data).encode('utf-8')
+        await websocket.send(binary_data)
+        
+        # Receive messages until we get a valid price
+        max_attempts = 10
+        attempt = 0
+        ce_entry_taken = self.ce_normal_order_id is not None
+        pe_entry_taken = self.pe_normal_order_id is not None
+
+        while attempt < max_attempts:
+            try:
+                message = await asyncio.wait_for(websocket.recv(), timeout=5.0)
+                decoded_data = decode_protobuf(message)
+                data_dict = MessageToDict(decoded_data)
+                is_ce_data = self.ce_instrument_key == list(data_dict.get('feeds').keys())[0]
+                is_pe_data = self.pe_instrument_key == list(data_dict.get('feeds').keys())[0]
+
+
+                if is_ce_data:
+                    result = self.sensex_trader.extract_l1_ohlc(data_dict)
+                    if result and result.get('ltp', 0) > 0:
+                        ltp = result['ltp']
+                        if ltp > ce_price and not ce_entry_taken:
+                            self.ce_normal_order_id = self.sensex_trader.place_normal_order(
+                                quantity=self.quantity,
+                                buy_price=ce_price,
+                                instrument_key=self.ce_instrument_key
+                            ).data.order_ids[0]
+                            ce_entry_taken = True
+                            print(f"✅ CE normal order placed. Order ID: {self.ce_normal_order_id}")
+                            asyncio.gather(self.monitor_portfolio_updates())
+
+                if is_pe_data:
+                    result = self.sensex_trader.extract_l1_ohlc(data_dict)
+                    if result and result.get('ltp', 0) > 0:
+                        ltp = result['ltp']
+                        if ltp > pe_price and not pe_entry_taken:
+                            self.pe_normal_order_id = self.sensex_trader.place_normal_order(
+                                quantity=self.quantity,
+                                buy_price=pe_price,
+                                instrument_key=self.pe_instrument_key
+                            ).data.order_ids[0]
+                            pe_entry_taken = True
+                            print(f"✅ PE normal order placed. Order ID: {self.pe_normal_order_id}")
+
+                if ce_entry_taken and pe_entry_taken:
+                    return                
+
+            except asyncio.TimeoutError:
+                attempt += 1
+                print(f"⏳ Waiting for Sensex price data... (attempt {attempt}/{max_attempts})")
+            except Exception as e:
+                print(f"Error capturing Sensex price: {e}")
+                attempt += 1
+        
+        raise ValueError("Failed to capture Sensex price at 9:17 AM")
+    
+
+    
+
     async def execute_strategy(self):
         """Main strategy execution function."""
         print("=" * 60)
@@ -759,7 +843,7 @@ class TradingStrategy:
         self.setup_portfolio_streamer()
         
         # Wait a bit for portfolio streamer to connect
-        time_module.sleep(2)
+        time_module.sleep(1)
         
         # Create SSL context
         ssl_context = ssl.create_default_context()
@@ -776,27 +860,9 @@ class TradingStrategy:
                 ssl=ssl_context
             ) as websocket:
                 print("✅ WebSocket connected")
-                
-                # Step 1: Capture Sensex price at 9:17
-                if not self.sensex_price_at_917:
-                    sensex_price = await self.capture_sensex_price_at_917(websocket)
-          
-                print('sensex price at 917',sensex_price)
-                # Step 2: Get option contracts
-                self.get_option_contracts_for_price(sensex_price)
-                
-                # # Step 3: Track high prices from 9:17 to 9:30
-                if not self.ce_high_price and not self.pe_high_price:
-                    await self.track_high_prices(websocket)
 
-                # Step 4: Place orders after 9:30
-                # self.place_option_orders()
-                
-                 # Step 5: Monitor orders for stop loss/target hits (run both monitoring functions concurrently)
-                # await asyncio.gather(
-                #     self.monitor_portfolio_updates()
-                # )
-                
+            self.sensex_trader.normal_gtt_execution(websocket)   
+             
         except Exception as e:
             print(f"❌ Error in strategy execution: {e}")
             import traceback
@@ -821,6 +887,6 @@ def main():
     # time_module.sleep(60)  # Keep it running for testing
 
 
-# if __name__ == "__main__":
-#     main()
+if __name__ == "__main__":
+    main()
 

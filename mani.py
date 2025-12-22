@@ -9,21 +9,61 @@ import os
 import time as tm
 import requests
 import json
+import ssl
+import websockets
+import asyncio
+import MarketDataFeed_pb2 as pb
+from google.protobuf.json_format import MessageToDict
+import queue
+
+
+
+
+load_dotenv()
+access_token = os.getenv('access_token')
+
+
+
+
+
+def decode_protobuf(buffer):
+    """Decode protobuf message."""
+    feed_response = pb.FeedResponse()
+    feed_response.ParseFromString(buffer)
+    return feed_response
+
+
 
 class AlgoKM:
-    def __init__(self,instrument_key='BSE_INDEX|SENSEX',access_token=None,tick_size=False):
+    def __init__(self,instrument_key='BSE_INDEX|SENSEX',access_token=None,tick_size=False,buy_percentage=1.5,stop_loss_percentage=1.25,target_percentage=2.5,product='I',validity='DAY',order_type='LIMIT'):
         self.configuration = upstox_client.Configuration(sandbox=False)
         self.configuration.access_token = access_token
         self.api_instance = upstox_client.OrderApiV3(upstox_client.ApiClient(self.configuration))
         self.instrument_key = instrument_key
         self.tick_size = tick_size
         self.option_contracts = None
+        self.order_id = None
+        self.product = product
+        self.validity = validity
+        self.order_type = order_type
+
+        self.buy_price = None
+        self.quantity = None
+
+
+        self.buy_percentage = buy_percentage
+        self.stop_loss_percentage = stop_loss_percentage
+        self.target_percentage = target_percentage
         
         threading.Thread(
             target=self.get_option_contracts_response,
             daemon=True
         ).start()
-        
+
+        # Portfolio streamer for order tracking
+        self.portfolio_streamer = None
+        self.portfolio_thread = None
+        self.portfolio_update_queue = queue.Queue()
 
         
 
@@ -32,6 +72,34 @@ class AlgoKM:
         return round(price / tick_size) * tick_size
 
 
+    def place_normal_order(self, quantity, buy_price, instrument_key=None):
+
+        if instrument_key is None:
+            instrument_key = self.instrument_key
+
+        # 🔧 Dummy hard-coded request body for testing
+        body = upstox_client.PlaceOrderV3Request(
+            quantity=quantity,                  # hardcoded quantity
+            product=self.product,                 # Delivery
+            validity=self.validity,              # DAY order
+            price=buy_price,                   # price (ignored for MARKET)
+            tag="buy-order",      # any string tag
+            instrument_token=instrument_key,  # hardcoded instrument
+            order_type=self.order_type,         # market order
+            transaction_type="BUY",      # buy order
+            disclosed_quantity=0,        # nothing disclosed
+            trigger_price=0.0,           # 0 for non-SL orders
+            is_amo=False,                # not an AMO
+            slice=False                  # no auto-slicing
+        )
+
+        try:
+            api_response = self.api_instance.place_order(body)
+            print("Order Placed:", api_response)
+            return api_response
+        except ApiException as e:
+            print("Exception when calling OrderApi->place_order: %s\n" % e) 
+         
     def buyStock(self,quantity,buy_price,instrument_key=None):
 
         if instrument_key is None:
@@ -101,12 +169,12 @@ class AlgoKM:
         
         sell_order = upstox_client.PlaceOrderV3Request(
             quantity=quantity,
-            product="D",
-            validity="DAY",
+            product=self.product,
+            validity=self.validity,
             price=sell_price,
-            tag="sell_at_50",
-            instrument_token="NSE_EQ|INE669E01016",
-            order_type="LIMIT",
+            tag="sell_order",
+            instrument_token=self.instrument_key,
+            order_type=self.order_type,
             transaction_type="SELL",
             disclosed_quantity=0,
             trigger_price=0.0,
@@ -116,6 +184,7 @@ class AlgoKM:
         try:
             api_response = self.api_instance.place_order(sell_order)
             print("Order Placed:", api_response)
+            return api_response
         except ApiException as e:
             print("Exception when calling OrderApi->place_order: %s\n" % e)
 
@@ -127,19 +196,14 @@ class AlgoKM:
         else:
             return current
 
-    def when_to_sell(self,selled_price,closed_price):
-        target_price = self.round_to_tick_size(selled_price + (selled_price * 2.5 / 100))
-        stop_loss_price = self.round_to_tick_size(selled_price + (selled_price * -1.5 / 100))
-        
-        if closed_price >= target_price:
-            print(f'it have been 2.5% hooray {target_price} of {closed_price}')
-            self.sellStock(quantity=1,sell_price=target_price)
-
-        elif closed_price <= stop_loss_price:
-            print(f'oh sorry we are loosing {stop_loss_price} of {closed_price}')
-            self.sellStock(quantity=1,sell_price=stop_loss_price)
-        else:
-            print(f'not reached the expect value expecting values are top {target_price} low {stop_loss_price} cr {closed_price}')
+    def cancel_normal_order(self,order_id):
+        try:
+            api_response = self.api_instance.cancel_order(order_id)
+            print("Order Cancelled:", api_response)
+            return api_response
+        except ApiException as e:
+            print("Exception when calling OrderApi->cancel_order: %s\n" % e)
+        print(f"✅ Normal order cancelled. Order ID: {order_id}")
 
     def get_gtt_order_details(self,order_id):
         gtt_detail = self.api_instance.get_gtt_order_details(gtt_order_id=order_id)
@@ -361,6 +425,7 @@ class AlgoKM:
 
     def get_option_contracts_response(self):
         """Get option contracts response. Handles errors gracefully."""
+        
         try:
             options_instance = upstox_client.OptionsApi(
                 upstox_client.ApiClient(self.configuration)
@@ -562,6 +627,297 @@ class AlgoKM:
         return response
 
 
+    async def normal_order_execution(self, websocket, buy_price, quantity):
+
+        self.buy_price = buy_price +  (buy_price * self.buy_percentage) / 100
+
+        self.quantity = quantity
+     
+        if self.tick_size:
+            self.quantity = self.round_to_tick_size(quantity)
+
+
+        data = {
+            "guid": "normal_order_sub",
+            "method": "sub",
+            "data": {
+                "mode": "ltpc",
+                "instrumentKeys": [self.instrument_key]
+            }
+        }
+        binary_data = json.dumps(data).encode('utf-8')
+        await websocket.send(binary_data)
+        
+        # Receive messages until we get a valid price
+        max_attempts = 2
+        attempt = 0
+        entry_taken = self.order_id is not None
+
+        while attempt < max_attempts:
+            try:
+                message = await asyncio.wait_for(websocket.recv(), timeout=5.0)
+                decoded_data = decode_protobuf(message)
+                data_dict = MessageToDict(decoded_data)
+                is_data = self.instrument_key == list(data_dict.get('feeds').keys())[0]
+               
+
+                if is_data:
+                    result = self.extract_l1_ohlc(data_dict)
+                    if result and result.get('ltp', 0) > 0:
+                        ltp = result['ltp']
+                        if ltp > self.buy_price and not entry_taken:
+                            self.order_id = self.place_normal_order(
+                                quantity=self.quantity,
+                                buy_price=self.buy_price,
+                                instrument_key=self.instrument_key
+                            ).data.order_ids[0]
+                            entry_taken = True
+                            print(f"✅ Normal order placed. Order ID: {self.order_id}")
+                            break        
+                  
+            except asyncio.TimeoutError:
+                attempt += 1
+                print(f"⏳ Waiting for Sensex price data... (attempt {attempt}/{max_attempts})")
+            except Exception as e:
+                print(f"Error capturing Sensex price: {e}")
+                attempt += 1
+
+        return entry_taken if entry_taken else False
+    
+
+
+
+
+
+    def setup_portfolio_streamer(self):
+        """Set up PortfolioDataStreamer to track GTT order updates."""
+        try:
+            
+            
+            self.portfolio_streamer = upstox_client.PortfolioDataStreamer(
+                upstox_client.ApiClient(self.configuration),
+                order_update=True,
+                position_update=False,
+                holding_update=False,
+                gtt_update=True
+            )
+            
+            def on_portfolio_message(message):
+                """Handle portfolio/order update messages."""
+                self.handle_order_updates(json.loads(message))
+            
+            def on_portfolio_open():
+                print("✅ Portfolio streamer connected")
+            
+            def on_portfolio_error(error):
+                print(f"❌ Portfolio streamer error: {error}")
+            
+            self.portfolio_streamer.on("message", on_portfolio_message)
+            self.portfolio_streamer.on("open", on_portfolio_open)
+            self.portfolio_streamer.on("error", on_portfolio_error)
+            
+            # Connect in a separate thread
+            def run_portfolio_streamer():
+                self.portfolio_streamer.connect()
+            
+            self.portfolio_thread = threading.Thread(target=run_portfolio_streamer, daemon=True)
+            self.portfolio_thread.start()
+            
+            print("📡 Portfolio streamer setup complete")
+            
+        except Exception as e:
+            print(f"Error setting up portfolio streamer: {e}")
+
+    def handle_order_updates(self, message):
+        """
+        Process order status updates from PortfolioDataStreamer and add to queue.
+        
+        Args:
+            message: Order update message from websocket
+        """
+        try:
+            # Parse the message (format depends on Upstox API)
+            if isinstance(message, dict):
+                order_data = message
+                
+            else:
+                # Try to convert to dict if it's a model instance
+                order_data = message.to_dict() if hasattr(message, 'to_dict') else str(message)
+            
+            print(f"📨 Order update received: {json.dumps(order_data, indent=2) if isinstance(order_data, dict) else order_data}")
+            
+            # Add to queue for async processing
+            self.portfolio_update_queue.put(order_data)
+                
+        except Exception as e:
+            print(f"Error handling order update: {e}")
+        
+    async def monitor_portfolio_updates(self):
+        """
+        Monitor portfolio streamer updates and handle re-entry logic based on GTT order status.
+        This function processes real-time updates from the portfolio streamer websocket.
+        Similar to monitor_orders but uses portfolio streamer data instead of polling.
+        """
+        print("📡 Monitoring portfolio streamer for order updates...")
+        
+        while True:
+            now = datetime.now(self.ist).time()
+            
+            
+            try:
+                # Wait for message with timeout
+                try:
+                    order_data = self.portfolio_update_queue.get(timeout=1.0)
+                    result = await self.process_portfolio_update(order_data)
+                    return result
+                except queue.Empty:
+                    # Timeout is expected, continue monitoring
+                    continue
+                    
+            except Exception as e:
+                print(f"Error in portfolio monitoring loop: {e}")
+                continue
+            
+            # Small sleep to prevent tight loop
+            await asyncio.sleep(0.1)
+
+    async def process_portfolio_update(self, order_data):
+        """
+        Process a single portfolio update message and handle re-entry if needed.
+        
+        Args:
+            order_data: Order update data from portfolio streamer
+        """
+
+        try:
+            update_type = order_data.get('update_type', '')
+            
+            if update_type == 'order':
+                order_ref_id = order_data.get('order_id', '')
+                status = order_data.get('status', '').lower()
+                
+                # Check if this order matches our GTT orders
+                is_normal_order = (self.order_id and order_ref_id == self.order_id)
+                
+                
+                # Check if order was rejected
+                if status == 'rejected' and is_normal_order:
+                    status_message = order_data.get('status_message', '')
+                    print(f"❌ Order {order_ref_id} REJECTED: {status_message}")
+                    return 'REJECTED'
+                elif status == 'complete' and is_normal_order:
+                    print(f"✅ Order {order_ref_id} COMPLETED")
+                    return 'COMPLETED'
+        except Exception as e:
+            print(f"Error processing portfolio update: {e}")
+            import traceback
+            traceback.print_exc()
+            return 'ERROR'
+
+
+   
+    async def track_stop_loss_and_target(self, websocket):
+        """
+        Track highest prices for CE and PE options between 9:17-9:30.
+        
+        Args:
+            websocket: WebSocket connection
+        """
+        print(f"📈 Tracking stop loss and target...")
+
+
+        
+        # Subscribe to sensex feed
+        data = {
+            "guid": "sensex_sub",
+            "method": "sub",
+            "data": {
+                "mode": "full",
+                "instrumentKeys": [self.instrument_key]
+            }
+        }
+        binary_data = json.dumps(data).encode('utf-8')
+        await websocket.send(binary_data)
+        
+        stop_loss_price = 0
+        target_price = 0
+        
+        try:    
+            # Receive message with timeout
+            message = await asyncio.wait_for(websocket.recv(), timeout=1.0)
+            decoded_data = decode_protobuf(message)
+            data_dict = MessageToDict(decoded_data)
+            
+            # Extract prices for CE
+            if 'feeds' in data_dict and self.instrument_key in data_dict['feeds']:
+                
+                data_ik = self.extract_i1_ohlc(data_dict,self.instrument_key)
+                ltp = data_ik.get('ltpc', {})['ltp']
+
+                if ltp <= stop_loss_price:
+                    response = self.sellStock(
+                        quantity=self.quantity,
+                        sell_price=stop_loss_price
+                    ).data.order_ids[0]
+
+                    print(f"✅ Stop loss price {stop_loss_price} reached")
+                    return response, 'STOP_LOSS'
+                if ltp >= target_price:
+                    response = self.sellStock(
+                        quantity=self.quantity,
+                        sell_price=target_price
+                    ).data.order_ids[0]
+                    print(f"✅ Target price {target_price} reached")
+                    return response, 'TARGET'
+
+        except asyncio.TimeoutError:
+            # Timeout is expected, continue tracking
+            pass
+        except Exception as e:
+            print(f"Error tracking prices: {e}")
+            pass
+    
+        return stop_loss_price
+    
+    
+
+
+    async def normal_gtt_execution(self,websocket,buy_price,quantity):
+        """Main strategy execution function."""
+        print("=" * 60)
+        print("🚀 Starting Trading Strategy")
+        print("=" * 60)
+        
+        # Setup portfolio streamer for order tracking
+        self.setup_portfolio_streamer()
+        
+        try:
+
+            entry_taken = await self.normal_order_execution(websocket,buy_price=buy_price,quantity=quantity)
+
+            if entry_taken:
+                status = await self.monitor_portfolio_updates()
+                if status == 'COMPLETED':
+                    response, status = await self.track_stop_loss_and_target(websocket)
+                    if status == 'TARGET':
+                        print(f"✅ {status} order placed")
+                        return 
+                    else:
+                        print(f"❌ {status} order not placed")
+                        return
+                         
+        except Exception as e:
+            print(f"❌ Error in strategy execution: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        print("=" * 60)
+        print("🏁 Trading Strategy Completed")
+        print("=" * 60)
+
+
+
+
         
 
 def verify_access_token(access_token):
@@ -610,17 +966,12 @@ def verify_access_token(access_token):
         return False, f"❌ Network error: {str(e)}"
     except Exception as e:
         return False, f"❌ Unexpected error: {str(e)}"
+
+
+    
         
     
-# load_dotenv()
-# my_access_token = os.getenv('access_token')  
-# instrument_key = 'BSE_FO|1134500'
-
-
-# print(my_access_token,'this is the access_token')
-
-
-# am = AlgoKM(instrument_key=instrument_key,access_token=my_access_token,tick_size=True)
+# Test code - only run when script is executed directly, not when imported
 
 
 # data = {'feeds': {'BSE_FO|1127928': {'fullFeed': {'marketFF': {'ltpc': {'ltp': 255.0, 'ltt': '1763529366611', 'ltq': '40', 'cp': 386.2}, 'marketLevel': {'bidAskQuote': [{'bidQ': '80', 'bidP': 254.6, 'askQ': '60', 'askP': 254.9}, {'bidQ': '20', 'bidP': 254.55, 'askQ': '40', 'askP': 255.0}, {'bidQ': '20', 'bidP': 254.5, 'askQ': '1080', 'askP': 255.05}, {'bidQ': '160', 'bidP': 254.4, 'askQ': '340', 'askP': 255.1}, {'bidQ': '340', 'bidP': 254.35, 'askQ': '340', 'askP': 255.15}]}, 'optionGreeks': {'delta': -0.4796, 'theta': -112.3274, 'gamma': 0.0006, 'vega': 19.3795, 'rho': -1.3444}, 'marketOHLC': {'ohlc': [{'interval': '1d', 'open': 385.95, 'high': 488.35, 'low': 235.6, 'close': 255.0, 'vol': '9027620', 'ts': '1763490600000'}, {'interval': 'I1', 'open': 260.5, 'high': 261.35, 'low': 255.4, 'close': 255.8, 'vol': '142360', 'ts': '1763529300000'}]}, 'atp': 296.86, 'vtt': '9027620', 'oi': 1416020.0, 'iv': 0.1387786865234375, 'tbq': 188240.0, 'tsq': 263140.0}}, 'requestMode': 'full_d5'}, 'BSE_FO|1128472': {'fullFeed': {'marketFF': {'ltpc': {'ltp': 228.1, 'ltt': '1763529365954', 'ltq': '40', 'cp': 239.35}, 'marketLevel': {'bidAskQuote': [{'bidQ': '160', 'bidP': 227.8, 'askQ': '20', 'askP': 228.3}, {'bidQ': '80', 'bidP': 227.75, 'askQ': '600', 'askP': 228.35}, {'bidQ': '220', 'bidP': 227.7, 'askQ': '160', 'askP': 228.4}, {'bidQ': '260', 'bidP': 227.65, 'askQ': '220', 'askP': 228.45}, {'bidQ': '680', 'bidP': 227.6, 'askQ': '180', 'askP': 228.5}]}, 'optionGreeks': {'delta': 0.5234, 'theta': -88.2644, 'gamma': 0.0008, 'vega': 19.3711, 'rho': 1.4507}, 'marketOHLC': {'ohlc': [{'interval': '1d', 'open': 239.2, 'high': 249.05, 'low': 125.75, 'close': 228.1, 'vol': '18783540', 'ts': '1763490600000'}, {'interval': 'I1', 'open': 219.35, 'high': 226.75, 'low': 219.35, 'close': 226.75, 'vol': '126180', 'ts': '1763529300000'}]}, 'atp': 191.32, 'vtt': '18783540', 'oi': 1438320.0, 'iv': 0.109100341796875, 'tbq': 238620.0, 'tsq': 226160.0}}, 'requestMode': 'full_d5'}}, 'currentTs': '1763529366451'}
