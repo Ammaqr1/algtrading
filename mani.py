@@ -15,6 +15,8 @@ class AlgoKM:
         self.configuration = upstox_client.Configuration(sandbox=False)
         self.configuration.access_token = access_token
         self.api_instance = upstox_client.OrderApiV3(upstox_client.ApiClient(self.configuration))
+        self.market_holidays_and_timings_api = upstox_client.MarketHolidaysAndTimingsApi(upstox_client.ApiClient(self.configuration))
+
         self.instrument_key = instrument_key
         self.tick_size = tick_size
         self.option_contracts = None
@@ -341,10 +343,13 @@ class AlgoKM:
         """
         Checks if today is Thursday and returns today's date if it is,
         otherwise returns the date of the next coming Thursday.
+        If the Thursday (or subsequent days going back) is a holiday,
+        it keeps going back until it finds a non-holiday day.
 
         Returns:
-        str: The date of the relevant Thursday in 'YYYY-MM-DD' format.
+        str: The date of the relevant Thursday (or earlier non-holiday day) in 'YYYY-MM-DD' format.
         """
+       
         today = date.today()
         # Weekday Monday is 0 and Sunday is 6. Thursday is 3.
         days_until_thursday = (3 - today.weekday() + 7) % 7
@@ -356,12 +361,29 @@ class AlgoKM:
             # Find the next Thursday
             thursday_date = today + timedelta(days=days_until_thursday)
 
-        url = f'https://api.upstox.com/v2/market/holidays/{thursday_date.strftime('%Y-%m-%d')}'
-        headers = {'Accept': 'application/json'}
-        response = requests.get(url=url, headers=headers, timeout=10)
-        response_data = response.json()
-        if 'BSE' in response_data['data'][0].get('closed_exchanges'):
-            thursday_date = thursday_date + timedelta(days=-1)
+        # Keep going back until we find a non-holiday day (max 3 days back, up to Monday)
+        days_back = 0
+        max_days_back = 3
+        
+        while days_back < max_days_back:
+            try:
+                response_data = self.market_holidays_and_timings_api.get_holiday(thursday_date.strftime('%Y-%m-%d'))
+                if response_data.data:
+                    closed_exchanges = response_data.data[0].closed_exchanges
+                else:
+                    closed_exchanges = []
+                
+                if 'BSE' not in closed_exchanges:
+                    # Found a non-holiday day, break out of loop
+                    break
+                else:
+                    # It's a holiday, go back one more day
+                    thursday_date = thursday_date + timedelta(days=-1)
+                    days_back += 1
+            except Exception as e:
+                # If API call fails, return the current date
+                print(f"Error checking holiday for {thursday_date}: {e}")
+                break
 
         return thursday_date.strftime('%Y-%m-%d')
     

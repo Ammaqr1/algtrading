@@ -421,50 +421,7 @@ class TradingStrategy:
                                 print('Error cancelling in the second attempt the CE order Retrying...')
                                 print('Please cancel the CE order manually')
                                 return
-            # Process regular order updates
-            # elif update_type == 'order':
-            #     order_ref_id = order_data.get('order_ref_id', '')
-            #     status = order_data.get('status', '').lower()
-                
-            #     # Check if this order matches our GTT orders
-            #     is_ce_order = (self.ce_gtt_order_id and order_ref_id == self.ce_gtt_order_id)
-            #     is_pe_order = (self.pe_gtt_order_id and order_ref_id == self.pe_gtt_order_id)
-                
-            #     if not (is_ce_order or is_pe_order):
-            #         # Not our order, skip
-            #         return
-                
-            #     # Check if order was rejected
-            #     if status == 'rejected':
-            #         status_message = order_data.get('status_message', '')
-            #         print(f"❌ Order {order_ref_id} REJECTED: {status_message}")
-                    
-            #         # Handle re-entry for rejected orders
-            #         if is_ce_order and not self.ce_reentry_placed:
-            #             print(f"🔄 Attempting CE re-entry for rejected order...")
-            #             try:
-            #                 self.ce_gtt_order_id = self.ce_trader.buyStock(
-            #                     quantity=self.quantity,
-            #                     buy_price=self.buy_price,
-            #                     instrument_key=self.ce_instrument_key
-            #                 ).data.gtt_order_ids[0]
-            #                 print(f"✅ CE re-entry order placed. GTT Order ID: {self.ce_gtt_order_id}")
-            #                 self.ce_reentry_placed = True
-            #             except Exception as e:
-            #                 print(f"❌ Error placing CE re-entry order: {e}")
-                    
-            #         elif is_pe_order and not self.pe_reentry_placed:
-            #             print(f"🔄 Attempting PE re-entry for rejected order...")
-            #             try:
-            #                 self.pe_gtt_order_id = self.pe_trader.buyStock(
-            #                     quantity=self.quantity,
-            #                     buy_price=self.buy_price,
-            #                     instrument_key=self.pe_instrument_key
-            #                 ).data.gtt_order_ids[0]
-            #                 print(f"✅ PE re-entry order placed. GTT Order ID: {self.pe_gtt_order_id}")
-            #                 self.pe_reentry_placed = True
-            #             except Exception as e:
-            #                 print(f"❌ Error placing PE re-entry order: {e}")
+          
                 
         except Exception as e:
             print(f"Error processing portfolio update: {e}")
