@@ -83,7 +83,7 @@ def run_strategy_async(access_token, start_time, end_time, exit_time, quantity, 
         st.session_state.strategy_running = False
 
 # Main UI
-st.title("📈 Trading Strategy Dashboard")
+st.title("📈 Trading Strategy Dashboard1")
 st.markdown("---")
 
 # Sidebar for configuration
