@@ -107,9 +107,9 @@ class TradingStrategy:
         if at_the_money_time is None:
             at_the_money_time = time_class(9, 17)  # 9:17 AM
         if start_time is None:
-            start_time = time_class(13,8)  # 9:17 AM
+            start_time = time_class(11,00)  # 9:17 AM
         if end_time is None:
-            end_time = time_class(13, 9)    # 9:30 AM
+            end_time = time_class(11, 5)    # 9:30 AM
         if exit_time is None:
             exit_time = time_class(22, 30)   # 3:30 PM
 
@@ -421,50 +421,7 @@ class TradingStrategy:
                                 print('Error cancelling in the second attempt the CE order Retrying...')
                                 print('Please cancel the CE order manually')
                                 return
-            # Process regular order updates
-            # elif update_type == 'order':
-            #     order_ref_id = order_data.get('order_ref_id', '')
-            #     status = order_data.get('status', '').lower()
-                
-            #     # Check if this order matches our GTT orders
-            #     is_ce_order = (self.ce_gtt_order_id and order_ref_id == self.ce_gtt_order_id)
-            #     is_pe_order = (self.pe_gtt_order_id and order_ref_id == self.pe_gtt_order_id)
-                
-            #     if not (is_ce_order or is_pe_order):
-            #         # Not our order, skip
-            #         return
-                
-            #     # Check if order was rejected
-            #     if status == 'rejected':
-            #         status_message = order_data.get('status_message', '')
-            #         print(f"❌ Order {order_ref_id} REJECTED: {status_message}")
-                    
-            #         # Handle re-entry for rejected orders
-            #         if is_ce_order and not self.ce_reentry_placed:
-            #             print(f"🔄 Attempting CE re-entry for rejected order...")
-            #             try:
-            #                 self.ce_gtt_order_id = self.ce_trader.buyStock(
-            #                     quantity=self.quantity,
-            #                     buy_price=self.buy_price,
-            #                     instrument_key=self.ce_instrument_key
-            #                 ).data.gtt_order_ids[0]
-            #                 print(f"✅ CE re-entry order placed. GTT Order ID: {self.ce_gtt_order_id}")
-            #                 self.ce_reentry_placed = True
-            #             except Exception as e:
-            #                 print(f"❌ Error placing CE re-entry order: {e}")
-                    
-            #         elif is_pe_order and not self.pe_reentry_placed:
-            #             print(f"🔄 Attempting PE re-entry for rejected order...")
-            #             try:
-            #                 self.pe_gtt_order_id = self.pe_trader.buyStock(
-            #                     quantity=self.quantity,
-            #                     buy_price=self.buy_price,
-            #                     instrument_key=self.pe_instrument_key
-            #                 ).data.gtt_order_ids[0]
-            #                 print(f"✅ PE re-entry order placed. GTT Order ID: {self.pe_gtt_order_id}")
-            #                 self.pe_reentry_placed = True
-            #             except Exception as e:
-            #                 print(f"❌ Error placing PE re-entry order: {e}")
+        
                 
         except Exception as e:
             print(f"Error processing portfolio update: {e}")
@@ -616,7 +573,11 @@ class TradingStrategy:
             now = datetime.now(self.ist).time()
         
             # Check if we've passed 9:30
-            if now > (time_class(self.end_time.hour,(self.end_time.minute + 1) % 60)):
+            # Handle minute rollover: if minute is 59, increment hour and set minute to 0
+            end_minute_plus_one = self.end_time.minute + 1
+            end_hour = self.end_time.hour + (1 if end_minute_plus_one >= 60 else 0)
+            end_minute = end_minute_plus_one % 60
+            if now > time_class(end_hour, end_minute):
                 print(f"⏰ {self.end_time.strftime('%H:%M')} reached. Final high prices:")
                 if not already_tracked:
                     ce_data = self.sensex_trader.intraday_history_per_minute(self.ce_instrument_key)
@@ -673,10 +634,13 @@ class TradingStrategy:
                     
                     data_ce_ik = self.sensex_trader.extract_i1_ohlc(data_dict,self.ce_instrument_key)
                     ce_ltp = data_ce_ik.get('ltpc', {})['ltp']
-                    print('ce ltp',ce_ltp)
-
+                    print(f"CE LTP: {ce_ltp} of CE where time is {now}")
                     
-                    if time_module.time() - last_ce_30_seconds >= 30 and now >= (time_class(self.start_time.hour,(self.start_time.minute + 1) % 60)):
+                    # Handle minute rollover: if minute is 59, increment hour and set minute to 0
+                    start_minute_plus_one = self.start_time.minute + 1
+                    start_hour = self.start_time.hour + (1 if start_minute_plus_one >= 60 else 0)
+                    start_minute = start_minute_plus_one % 60
+                    if time_module.time() - last_ce_30_seconds >= 30 and now >= time_class(start_hour, start_minute,20):
                         last_ce_30_seconds = time_module.time()
                         self.ce_high_price = self.sensex_trader.highMarketValue(
                             self.ce_high_price, data_ce_ik['ohlc_i1']['high'])  
@@ -692,8 +656,13 @@ class TradingStrategy:
                     
                     data_pe_ik = self.sensex_trader.extract_i1_ohlc(data_dict,self.pe_instrument_key)
                     pe_ltp = data_pe_ik.get('ltpc', {})['ltp']
-                
-                    if time_module.time() - last_pe_30_seconds >= 30 and now >= (time_class(self.start_time.hour,(self.start_time.minute + 1) % 60)):   
+                    # print(f"PE LTP: {pe_ltp} of PE where time is {now}")
+
+                    # Handle minute rollover: if minute is 59, increment hour and set minute to 0
+                    start_minute_plus_one = self.start_time.minute + 1
+                    start_hour = self.start_time.hour + (1 if start_minute_plus_one >= 60 else 0)
+                    start_minute = start_minute_plus_one % 60
+                    if time_module.time() - last_pe_30_seconds >= 30 and now >= time_class(start_hour, start_minute,20):   
                         last_pe_30_seconds = time_module.time()
                         self.pe_high_price = self.sensex_trader.highMarketValue(
                             self.pe_high_price, data_pe_ik['ohlc_i1']['high'])  
@@ -823,6 +792,6 @@ def main():
     # time_module.sleep(60)  # Keep it running for testing
 
 
-if __name__ == "__main__":
-    main()
+# if __name__ == "__main__":
+#     main()
 
