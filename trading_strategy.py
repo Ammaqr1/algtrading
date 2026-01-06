@@ -107,9 +107,9 @@ class TradingStrategy:
         if at_the_money_time is None:
             at_the_money_time = time_class(9, 17)  # 9:17 AM
         if start_time is None:
-            start_time = time_class(9,17)  # 9:17 AM
+            start_time = time_class(12,20)  # 9:17 AM
         if end_time is None:
-            end_time = time_class(9, 30)    # 9:30 AM
+            end_time = time_class(12, 29)    # 9:30 AM
         if exit_time is None:
             exit_time = time_class(22, 30)   # 3:30 PM
 
@@ -573,7 +573,11 @@ class TradingStrategy:
             now = datetime.now(self.ist).time()
         
             # Check if we've passed 9:30
-            if now > (time_class(self.end_time.hour,(self.end_time.minute + 1) % 60)):
+            # Handle minute rollover: if minute is 59, increment hour and set minute to 0
+            end_minute_plus_one = self.end_time.minute + 1
+            end_hour = self.end_time.hour + (1 if end_minute_plus_one >= 60 else 0)
+            end_minute = end_minute_plus_one % 60
+            if now > time_class(end_hour, end_minute):
                 print(f"⏰ {self.end_time.strftime('%H:%M')} reached. Final high prices:")
                 if not already_tracked:
                     ce_data = self.sensex_trader.intraday_history_per_minute(self.ce_instrument_key)
@@ -630,10 +634,12 @@ class TradingStrategy:
                     
                     data_ce_ik = self.sensex_trader.extract_i1_ohlc(data_dict,self.ce_instrument_key)
                     ce_ltp = data_ce_ik.get('ltpc', {})['ltp']
-                   
-
                     
-                    if time_module.time() - last_ce_30_seconds >= 30 and now >= (time_class(self.start_time.hour,(self.start_time.minute + 1) % 60)):
+                    # Handle minute rollover: if minute is 59, increment hour and set minute to 0
+                    start_minute_plus_one = self.start_time.minute + 1
+                    start_hour = self.start_time.hour + (1 if start_minute_plus_one >= 60 else 0)
+                    start_minute = start_minute_plus_one % 60
+                    if time_module.time() - last_ce_30_seconds >= 30 and now >= time_class(start_hour, start_minute,20):
                         last_ce_30_seconds = time_module.time()
                         self.ce_high_price = self.sensex_trader.highMarketValue(
                             self.ce_high_price, data_ce_ik['ohlc_i1']['high'])  
@@ -649,8 +655,12 @@ class TradingStrategy:
                     
                     data_pe_ik = self.sensex_trader.extract_i1_ohlc(data_dict,self.pe_instrument_key)
                     pe_ltp = data_pe_ik.get('ltpc', {})['ltp']
-                
-                    if time_module.time() - last_pe_30_seconds >= 30 and now >= (time_class(self.start_time.hour,(self.start_time.minute + 1) % 60)):   
+
+                    # Handle minute rollover: if minute is 59, increment hour and set minute to 0
+                    start_minute_plus_one = self.start_time.minute + 1
+                    start_hour = self.start_time.hour + (1 if start_minute_plus_one >= 60 else 0)
+                    start_minute = start_minute_plus_one % 60
+                    if time_module.time() - last_pe_30_seconds >= 30 and now >= time_class(start_hour, start_minute,20):   
                         last_pe_30_seconds = time_module.time()
                         self.pe_high_price = self.sensex_trader.highMarketValue(
                             self.pe_high_price, data_pe_ik['ohlc_i1']['high'])  
