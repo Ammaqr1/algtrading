@@ -88,7 +88,7 @@ st.markdown("---")
 
 # Sidebar for configuration
 with st.sidebar:
-    st.header("⚙️ Configurations")
+    st.header("⚙️ Configuration")
     
     # Access Token input
     st.subheader("🔑 Access Token")
