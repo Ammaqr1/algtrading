@@ -9,8 +9,6 @@ import os
 import time as tm
 import requests
 import json
-import ssl
-import websockets
 import asyncio
 import MarketDataFeed_pb2 as pb
 from google.protobuf.json_format import MessageToDict
@@ -49,6 +47,8 @@ class AlgoKM:
 
         self.buy_price = None
         self.quantity = None
+
+        self.ist = pytz.timezone("Asia/Kolkata")
 
 
         self.buy_percentage = buy_percentage
@@ -832,16 +832,18 @@ class AlgoKM:
             "guid": "sensex_sub",
             "method": "sub",
             "data": {
-                "mode": "full",
+                "mode": "ltpc",
                 "instrumentKeys": [self.instrument_key]
             }
         }
         binary_data = json.dumps(data).encode('utf-8')
         await websocket.send(binary_data)
         
-        stop_loss_price = 0
-        target_price = 0
-        
+    
+        stop_loss_price = self.buy_price - (self.buy_price * self.stop_loss_percentage / 100)
+        target_price = self.buy_price + (self.buy_price * self.target_percentage / 100)
+
+
         try:    
             # Receive message with timeout
             message = await asyncio.wait_for(websocket.recv(), timeout=1.0)
@@ -851,8 +853,8 @@ class AlgoKM:
             # Extract prices for CE
             if 'feeds' in data_dict and self.instrument_key in data_dict['feeds']:
                 
-                data_ik = self.extract_i1_ohlc(data_dict,self.instrument_key)
-                ltp = data_ik.get('ltpc', {})['ltp']
+                data_ik = self.extract_l1_ohlc(data_dict)
+                ltp = data_ik.get('ltp', 0)
 
                 if ltp <= stop_loss_price:
                     response = self.sellStock(
@@ -877,7 +879,7 @@ class AlgoKM:
             print(f"Error tracking prices: {e}")
             pass
     
-        return stop_loss_price
+        return None, 'Pending'
     
     
 
@@ -889,6 +891,7 @@ class AlgoKM:
         print("=" * 60)
         
         # Setup portfolio streamer for order tracking
+        await asyncio.sleep(1)
         self.setup_portfolio_streamer()
         
         try:
