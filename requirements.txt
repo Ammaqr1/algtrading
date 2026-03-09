@@ -4,3 +4,5 @@ requests==2.32.5
 python-dotenv==1.1.1
 pytz==2025.2
 upstox-python-sdk
+retrying
+prisma

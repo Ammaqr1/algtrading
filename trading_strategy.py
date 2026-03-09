@@ -12,6 +12,7 @@ Main strategy execution that:
 import asyncio
 from doctest import set_unittest_reportflags
 import json
+from re import A
 import ssl
 import websockets
 import requests
@@ -26,6 +27,7 @@ import time as time_module
 import threading
 import queue
 import upstox_client
+from retrying import retry
 
 
 load_dotenv()
@@ -108,7 +110,7 @@ class TradingStrategy:
         if at_the_money_time is None:
             at_the_money_time = time_class(9, 17)  # 9:17 AM
         if start_time is None:
-            start_time = time_class(12,20)  # 9:17 AM
+            start_time = time_class(11,56)  # 9:17 AM
         if end_time is None:
             end_time = time_class(12, 29)    # 9:30 AM
         if exit_time is None:
@@ -449,33 +451,6 @@ class TradingStrategy:
                     return 'PE_REJECTED'
                 elif status == 'complete' and is_pe_normal_order:
                     return 'PE_COMPLETED'
-                    
-                    # Handle re-entry for rejected orders
-                    # if is_ce_order and not self.ce_reentry_placed:
-                    #     print(f"🔄 Attempting CE re-entry for rejected order...")
-                    #     try:
-                    #         self.ce_gtt_order_id = self.ce_trader.buyStock(
-                    #             quantity=self.quantity,
-                    #             buy_price=self.buy_price,
-                    #             instrument_key=self.ce_instrument_key
-                    #         ).data.gtt_order_ids[0]
-                    #         print(f"✅ CE re-entry order placed. GTT Order ID: {self.ce_gtt_order_id}")
-                    #         self.ce_reentry_placed = True
-                    #     except Exception as e:
-                    #         print(f"❌ Error placing CE re-entry order: {e}")
-                    
-                    # elif is_pe_order and not self.pe_reentry_placed:
-                    #     print(f"🔄 Attempting PE re-entry for rejected order...")
-                    #     try:
-                    #         self.pe_gtt_order_id = self.pe_trader.buyStock(
-                    #             quantity=self.quantity,
-                    #             buy_price=self.buy_price,
-                    #             instrument_key=self.pe_instrument_key
-                    #         ).data.gtt_order_ids[0]
-                    #         print(f"✅ PE re-entry order placed. GTT Order ID: {self.pe_gtt_order_id}")
-                    #         self.pe_reentry_placed = True
-                    #     except Exception as e:
-                    #         print(f"❌ Error placing PE re-entry order: {e}")
                 
         except Exception as e:
             print(f"Error processing portfolio update: {e}")
@@ -573,33 +548,14 @@ class TradingStrategy:
         print(f"✅ CE Instrument Key: {self.ce_instrument_key}")
         print(f"✅ PE Instrument Key: {self.pe_instrument_key}")
         
-        # Initialize traders for CE and PE
-        self.ce_trader = AlgoKM(
-            access_token=self.access_token,
-            instrument_key=self.ce_instrument_key,
-            tick_size=True
-        )
-        self.pe_trader = AlgoKM(
-            access_token=self.access_token,
-            instrument_key=self.pe_instrument_key,
-            tick_size=True
-        )
-        
-        return
+        return self.ce_instrument_key, self.pe_instrument_key
     
-    async def track_high_prices(self, websocket):
+    async def track_high_price_for_both(self, websocket):
         """
         Track highest prices for CE and PE options between 9:17-9:30.
-        
-        Args:
-            websocket: WebSocket connection
-            ce_ik: CE instrument key
-            pe_ik: PE instrument key
         """
         print(f"📈 Tracking high prices for CE and PE from {self.start_time.strftime('%H:%M')} to {self.end_time.strftime('%H:%M')}...")
-        silent = True
-        await self.wait_until_time(self.start_time, silent=silent)
-
+        await self.wait_until_time(self.start_time, silent=True)
         
         # Subscribe to both CE and PE feeds
         data = {
@@ -607,165 +563,100 @@ class TradingStrategy:
             "method": "sub",
             "data": {
                 "mode": "full",
-                "instrumentKeys": [self.ce_instrument_key, self.pe_instrument_key]
+                "instrumentKeys": [self.pe_instrument_key, self.ce_instrument_key]
             }
         }
-        binary_data = json.dumps(data).encode('utf-8')
-        await websocket.send(binary_data)
+        await websocket.send(json.dumps(data).encode('utf-8'))
         
-        self.ce_high_price = 0
-        self.pe_high_price = 0
+        already_tracked = {self.pe_instrument_key: False, self.ce_instrument_key: False}
+        last_30_seconds = {self.pe_instrument_key: time_module.time(), self.ce_instrument_key: time_module.time()}
+        high_prices = {self.pe_instrument_key: 0, self.ce_instrument_key: 0}
+        labels = {self.pe_instrument_key: 'PE', self.ce_instrument_key: 'CE'}
+
+        # Calculate time limits
+        end_minute = (self.end_time.minute + 1) % 60
+        end_hour = self.end_time.hour + (1 if self.end_time.minute + 1 >= 60 else 0)
+        end_time_limit = time_class(end_hour, end_minute)
         
+        start_minute = (self.start_time.minute + 1) % 60
+        start_hour = self.start_time.hour + (1 if self.start_time.minute + 1 >= 60 else 0)
+        start_limit = time_class(start_hour, start_minute, 20)
         
-        # Track until 9:30
-        already_tracked = False
-        silent = False
+        start_time_plus_2s = time_class(self.start_time.hour, self.start_time.minute, self.start_time.second + 2)
         
-        last_ce_30_seconds = time_module.time()
-        last_pe_30_seconds = time_module.time()
+        @retry(stop_max_attempt_number=3, wait_fixed=1000)
+        def update_initial_history(inst_key):
+            if not already_tracked[inst_key]:
+                print(f"Tracking time already started for {labels[inst_key]} at {self.start_time.strftime('%H:%M')}") 
+                try:
+                    hist_data = self.sensex_trader.intraday_history_per_minute(inst_key)
+                    if not hist_data:
+                            print(f"❌ {labels[inst_key]} data not available")
+                            raise Exception(f"❌ {labels[inst_key]} data not available")
+                    high_prices[inst_key] = self.sensex_trader.highest_price_per_minute(
+                        hist_data, self.start_time, self.end_time, high_prices[inst_key]
+                    )
+                    already_tracked[inst_key] = True
+                except Exception as e:
+                    print(f"Error updating initial history: {e}")
+                    raise Exception(f"Error updating initial history: {e}")
+
         while True:
             now = datetime.now(self.ist).time()
         
-            # Check if we've passed 9:30
-            # Handle minute rollover: if minute is 59, increment hour and set minute to 0
-            end_minute_plus_one = self.end_time.minute + 1
-            end_hour = self.end_time.hour + (1 if end_minute_plus_one >= 60 else 0)
-            end_minute = end_minute_plus_one % 60
-            if now > time_class(end_hour, end_minute):
+            # Check if we've passed the end time
+            if now > end_time_limit:
                 print(f"⏰ {self.end_time.strftime('%H:%M')} reached. Final high prices:")
-                if not already_tracked:
-                    ce_data = self.sensex_trader.intraday_history_per_minute(self.ce_instrument_key)
-                    pe_data = self.sensex_trader.intraday_history_per_minute(self.pe_instrument_key)
-
-                    self.ce_high_price = self.sensex_trader.highest_price_per_minute(ce_data,self.start_time,self.end_time,self.ce_high_price)
-                    self.pe_high_price = self.sensex_trader.highest_price_per_minute(pe_data,self.start_time,self.end_time,self.pe_high_price)
-                    already_tracked = True
-                print(f"   CE High: ₹{self.ce_high_price}")
-                print(f"   PE High: ₹{self.pe_high_price}")
+                for inst_key in labels:
+                    update_initial_history(inst_key)
+                    print(f"   {labels[inst_key]} High: ₹{high_prices[inst_key]}")
                 break
             
-            # check if start time is reached
-            if self.start_time <= now <= self.end_time and not already_tracked:
-
-                ce_data = self.sensex_trader.intraday_history_per_minute(self.ce_instrument_key)
-                pe_data = self.sensex_trader.intraday_history_per_minute(self.pe_instrument_key)
-
-                silent = True
-                already_tracked = True
-
-                if not ce_data:
-                    print(f"❌ CE data not available")
-                    
-
-                if not pe_data:
-                    print(f"❌ PE data not available")
-                    
-
-
-                self.ce_high_price = self.sensex_trader.highest_price_per_minute(ce_data,self.start_time,self.end_time,self.ce_high_price)
-                self.pe_high_price = self.sensex_trader.highest_price_per_minute(pe_data,self.start_time,self.end_time,self.pe_high_price)
+            # Check if tracking window has started
+            if start_time_plus_2s <= now <= self.end_time:
+                for inst_key in labels:
+                    update_initial_history(inst_key)
                 
-
             # Check exit time
             if now >= self.exit_time:
                 print(f"⏰ Exit time {self.exit_time.strftime('%H:%M')} reached.")
-                already_tracked = True
-
                 break
             
-
             try:
-                already_tracked = True
-                silent = True
-                    
                 # Receive message with timeout
                 message = await asyncio.wait_for(websocket.recv(), timeout=1.0)
                 decoded_data = decode_protobuf(message)
                 data_dict = MessageToDict(decoded_data)
-                
-                # Extract prices for CE
-                if 'feeds' in data_dict and self.ce_instrument_key in data_dict['feeds']:
-                    
-                    data_ce_ik = self.sensex_trader.extract_i1_ohlc(data_dict,self.ce_instrument_key)
-                    ce_ltp = data_ce_ik.get('ltpc', {})['ltp']
-                    
-                    # Handle minute rollover: if minute is 59, increment hour and set minute to 0
-                    start_minute_plus_one = self.start_time.minute + 1
-                    start_hour = self.start_time.hour + (1 if start_minute_plus_one >= 60 else 0)
-                    start_minute = start_minute_plus_one % 60
-                    if time_module.time() - last_ce_30_seconds >= 30 and now >= time_class(start_hour, start_minute,20):
-                        last_ce_30_seconds = time_module.time()
-                        self.ce_high_price = self.sensex_trader.highMarketValue(
-                            self.ce_high_price, data_ce_ik['ohlc_i1']['high'])  
-                     
 
-                    if ce_ltp > 0:
-                        self.ce_high_price = self.sensex_trader.highMarketValue(
-                            self.ce_high_price, ce_ltp
-                        )
-                
-                # Extract prices for PE
-                if 'feeds' in data_dict and self.pe_instrument_key in data_dict['feeds']:
-                    
-                    data_pe_ik = self.sensex_trader.extract_i1_ohlc(data_dict,self.pe_instrument_key)
-                    pe_ltp = data_pe_ik.get('ltpc', {})['ltp']
+                if 'feeds' in data_dict:
+                    for inst_key in labels:
+                        if inst_key in data_dict['feeds']:
+                            data_ik = self.sensex_trader.extract_i1_ohlc(data_dict, inst_key)
+                            ltp = data_ik.get('ltpc', {}).get('ltp', 0)
+                            print(f"{labels[inst_key]} LTP: ₹{ltp}")
 
-                    # Handle minute rollover: if minute is 59, increment hour and set minute to 0
-                    start_minute_plus_one = self.start_time.minute + 1
-                    start_hour = self.start_time.hour + (1 if start_minute_plus_one >= 60 else 0)
-                    start_minute = start_minute_plus_one % 60
-                    if time_module.time() - last_pe_30_seconds >= 30 and now >= time_class(start_hour, start_minute,20):   
-                        last_pe_30_seconds = time_module.time()
-                        self.pe_high_price = self.sensex_trader.highMarketValue(
-                            self.pe_high_price, data_pe_ik['ohlc_i1']['high'])  
-                            
-                            
-                    if pe_ltp > 0:
-                        self.pe_high_price = self.sensex_trader.highMarketValue(
-                            self.pe_high_price, pe_ltp
-                        )
-                    
+                            if time_module.time() - last_30_seconds[inst_key] >= 30 and now >= start_limit:   
+                                last_30_seconds[inst_key] = time_module.time()
+                                high_price_from_ohlc = data_ik.get('ohlc_i1', {}).get('high', 0)
+                                high_prices[inst_key] = self.sensex_trader.highMarketValue(
+                                    high_prices[inst_key], high_price_from_ohlc
+                                )  
+                                    
+                            if ltp > 0:
+                                high_prices[inst_key] = self.sensex_trader.highMarketValue(
+                                    high_prices[inst_key], ltp
+                                )
+                                
             except asyncio.TimeoutError:
-                # Timeout is expected, continue tracking
                 continue
             except Exception as e:
                 print(f"Error tracking prices: {e}")
                 continue
-    
-    def place_option_orders(self):
-        """
-        Place buy orders for both CE and PE at their respective highest prices.
-        """
-        if self.ce_high_price <= 0 or self.pe_high_price <= 0:
-            print("❌ Cannot place orders: high prices not available")
-            return
-        
-        print(f"📝 Placing orders at high prices:")
-        print(f"   CE: ₹{self.ce_high_price} (quantity: {self.quantity})")
-        print(f"   PE: ₹{self.pe_high_price} (quantity: {self.quantity})")
-        
-        try:
-            # Place CE order
-            if self.ce_instrument_key and self.ce_high_price > 0 and not self.ce_gtt_order_id:
-                self.ce_gtt_order_id = self.ce_trader.buyStock(
-                    quantity=self.quantity,
-                    buy_price=self.ce_high_price,
-                    instrument_key=self.ce_instrument_key
-                ).data.gtt_order_ids[0]
-                print(f"✅ CE order placed. GTT Order ID: {self.ce_gtt_order_id}")
-            
-            # Place PE order
-            if self.pe_instrument_key and self.pe_high_price > 0 and not self.pe_gtt_order_id:
-                self.pe_gtt_order_id = self.pe_trader.buyStock(
-                    quantity=self.quantity,
-                    buy_price=self.pe_high_price,
-                    instrument_key=self.pe_instrument_key
-                ).data.gtt_order_ids[0]
-                print(f"✅ PE order placed. GTT Order ID: {self.pe_gtt_order_id}")
                 
-        except Exception as e:
-            print(f"❌ Error placing orders: {e}")
-    
+        # Set final class properties
+        self.pe_high_price = high_prices[self.pe_instrument_key]
+        self.ce_high_price = high_prices[self.ce_instrument_key]
+                
     async def normal_order_execution(self, websocket, ce_buy_price, pe_buy_price, ce_intrument_ke=None, pe_intrument_key=None):
 
         if ce_intrument_key is None:
@@ -773,74 +664,9 @@ class TradingStrategy:
         if pe_intrument_key is None:
             pe_intrument_key = self.pe_instrument_key
 
-        ce_price = ce_buy_price +  (ce_buy_price * 1.5) / 100
-        pe_price = pe_buy_price + (pe_buy_price * 1.5) / 100
-
-
-        data = {
-            "guid": "normal_order_sub",
-            "method": "sub",
-            "data": {
-                "mode": "ltpc",
-                "instrumentKeys": [ce_intrument_key, pe_intrument_key]
-            }
-        }
-        binary_data = json.dumps(data).encode('utf-8')
-        await websocket.send(binary_data)
         
-        # Receive messages until we get a valid price
-        max_attempts = 10
-        attempt = 0
-        ce_entry_taken = self.ce_normal_order_id is not None
-        pe_entry_taken = self.pe_normal_order_id is not None
 
-        while attempt < max_attempts:
-            try:
-                message = await asyncio.wait_for(websocket.recv(), timeout=5.0)
-                decoded_data = decode_protobuf(message)
-                data_dict = MessageToDict(decoded_data)
-                is_ce_data = self.ce_instrument_key == list(data_dict.get('feeds').keys())[0]
-                is_pe_data = self.pe_instrument_key == list(data_dict.get('feeds').keys())[0]
-
-
-                if is_ce_data:
-                    result = self.sensex_trader.extract_l1_ohlc(data_dict)
-                    if result and result.get('ltp', 0) > 0:
-                        ltp = result['ltp']
-                        if ltp > ce_price and not ce_entry_taken:
-                            self.ce_normal_order_id = self.sensex_trader.place_normal_order(
-                                quantity=self.quantity,
-                                buy_price=ce_price,
-                                instrument_key=self.ce_instrument_key
-                            ).data.order_ids[0]
-                            ce_entry_taken = True
-                            print(f"✅ CE normal order placed. Order ID: {self.ce_normal_order_id}")
-                            asyncio.gather(self.monitor_portfolio_updates())
-
-                if is_pe_data:
-                    result = self.sensex_trader.extract_l1_ohlc(data_dict)
-                    if result and result.get('ltp', 0) > 0:
-                        ltp = result['ltp']
-                        if ltp > pe_price and not pe_entry_taken:
-                            self.pe_normal_order_id = self.sensex_trader.place_normal_order(
-                                quantity=self.quantity,
-                                buy_price=pe_price,
-                                instrument_key=self.pe_instrument_key
-                            ).data.order_ids[0]
-                            pe_entry_taken = True
-                            print(f"✅ PE normal order placed. Order ID: {self.pe_normal_order_id}")
-
-                if ce_entry_taken and pe_entry_taken:
-                    return                
-
-            except asyncio.TimeoutError:
-                attempt += 1
-                print(f"⏳ Waiting for Sensex price data... (attempt {attempt}/{max_attempts})")
-            except Exception as e:
-                print(f"Error capturing Sensex price: {e}")
-                attempt += 1
-        
-        raise ValueError("Failed to capture Sensex price at 9:17 AM")
+ 
     
 
     
@@ -864,7 +690,6 @@ class TradingStrategy:
         
         # Get market data feed authorization
         response = get_market_data_feed_authorize_v3(self.access_token)
-        
         try:
             # Connect to WebSocket
             async with websockets.connect(
@@ -873,7 +698,14 @@ class TradingStrategy:
             ) as websocket:
                 print("✅ WebSocket connected")
 
-            self.sensex_trader.normal_gtt_execution(websocket)   
+                sensex_price = await self.capture_sensex_price_at_917(websocket)
+
+                self.get_option_contracts_for_price(sensex_price)
+
+                await self.track_high_price_for_both(websocket)
+
+                # custom Gtt order here
+                await self.normal_order_execution(websocket, self.ce_high_price, self.pe_high_price)   
              
         except Exception as e:
             print(f"❌ Error in strategy execution: {e}")
