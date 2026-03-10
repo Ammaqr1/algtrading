@@ -1,3 +1,4 @@
+
 import upstox_client
 from upstox_client.rest import ApiException
 from datetime import datetime, time, timedelta, date
@@ -13,7 +14,7 @@ import asyncio
 import MarketDataFeed_pb2 as pb
 from google.protobuf.json_format import MessageToDict
 import queue
-
+from retrying import retry
 
 
 
@@ -33,7 +34,7 @@ def decode_protobuf(buffer):
 
 
 class AlgoKM:
-    def __init__(self,instrument_key='BSE_INDEX|SENSEX',access_token=None,tick_size=False,buy_percentage=1.5,stop_loss_percentage=1.25,target_percentage=2.5,product='I',validity='DAY',order_type='LIMIT'):
+    def __init__(self,instrument_key='BSE_INDEX|SENSEX',access_token=None,tick_size=False,buy_percentage=1.5,stop_loss_percentage=1.25,target_percentage=2.5,product='I',validity='DAY',order_type='LIMIT',weekday=1,exchange='BSE'):
         self.configuration = upstox_client.Configuration(sandbox=False)
         self.configuration.access_token = access_token
         self.api_instance = upstox_client.OrderApiV3(upstox_client.ApiClient(self.configuration))
@@ -49,6 +50,10 @@ class AlgoKM:
 
         self.buy_price = None
         self.quantity = None
+        self.ltp_order_price = None
+
+        self.weekday = weekday
+        self.exchange = exchange    
 
         self.ist = pytz.timezone("Asia/Kolkata")
 
@@ -57,10 +62,12 @@ class AlgoKM:
         self.stop_loss_percentage = stop_loss_percentage
         self.target_percentage = target_percentage
         
-        threading.Thread(
-            target=self.get_option_contracts_response,
-            daemon=True
-        ).start()
+        # args=(...) for positional args, kwargs={...} for keyword args (target already has self)
+        # threading.Thread(
+        #     target=self.get_option_contracts_response,
+        #     kwargs={'weekday': self.weekday, 'exchange': self.exchange},  # e.g. Thursday, BSE
+        #     daemon=True
+        # ).start()
 
         # Portfolio streamer for order tracking
         self.portfolio_streamer = None
@@ -119,9 +126,7 @@ class AlgoKM:
         if self.tick_size:
             target_value = self.round_to_tick_size(target_value)
 
-        print('buy_price',buy_price)
-        print('stop_loss_value',stop_loss_value)
-        print('target_value',target_value)
+
 
         entry_rule = upstox_client.GttRule(
             strategy="ENTRY",           # ENTRY / STOPLOSS / TARGET
@@ -159,10 +164,6 @@ class AlgoKM:
         except ApiException as e:
             print("Exception when calling OrderApi->place_order: %s\n" % e)
 
-
-    def get_all_gtt_orders(self):
-        gtt_order = self.api_instance.get_gtt_order_details()
-        return gtt_order
 
     def sellStock(self,quantity,sell_price):
         # Round sell_price to tick size
@@ -207,54 +208,6 @@ class AlgoKM:
             print("Exception when calling OrderApi->cancel_order: %s\n" % e)
         print(f"✅ Normal order cancelled. Order ID: {order_id}")
 
-    def get_gtt_order_details(self,order_id):
-        gtt_detail = self.api_instance.get_gtt_order_details(gtt_order_id=order_id)
-        # The SDK returns a model instance; convert it to dict for easier downstream handling
-        return gtt_detail.to_dict()
-
-    def check_gtt_status(self,api_response):
-        """Check if GTT order hit stop loss, target, or got cancelled."""
-        try:
-            data_list = api_response.get("data", [])
-            if not data_list:
-                return "No data"
-
-            for order in data_list:
-                rules = order.get("rules", [])
-                # Flags to track rule states
-                target_hit = False
-                stoploss_hit = False
-                all_cancelled = True
-                bought_it = False
-
-                for rule in rules:
-                    status = rule.get("status")
-                    strategy = rule.get("strategy")
-
-                    if status != "CANCELLED":
-                        all_cancelled = False
-
-                    if strategy == "TARGET" and status == "TRIGGERED":
-                        target_hit = True
-                    elif strategy == "STOPLOSS" and status == "TRIGGERED":
-                        stoploss_hit = True
-                    elif strategy == "ENTRY" and status == "TRIGGERED":
-                        bought_it = True
-
-                # Decision logic
-                if stoploss_hit:
-                    return "Stop Loss Hit"
-                elif target_hit:
-                    return "Target Hit"
-                elif all_cancelled:
-                    return "Cancelled"
-                elif bought_it:
-                    return 'Entry Has been triggered'
-                else:
-                    return "Active"
-
-        except Exception as e:
-            return f"Error: {e}"
 
     def extract_l1_ohlc(self, data_dict):
         """
@@ -350,109 +303,66 @@ class AlgoKM:
             return None
         except Exception as e:
             print(f"Error extracting I1 OHLC: {e}")
-            return None
-
-    def is_price_near_trigger(self,current_price,buy_price,threshold_percent=0.5):
-        # Round buy_price to tick size
-        if self.tick_size:
-            buy_price = self.round_to_tick_size(buy_price)
-        
-        target_price = buy_price + (buy_price * 2.5 / 100)
-        if self.tick_size:
-            target_price = self.round_to_tick_size(target_price)
-        
-        stop_loss_price = buy_price + (buy_price * -1.25 / 100)
-        if self.tick_size:
-            stop_loss_price = self.round_to_tick_size(stop_loss_price)
-
-        if current_price >= target_price - (target_price * threshold_percent / 100):
-            return True, "TARGET", target_price
-        elif current_price <= stop_loss_price + (stop_loss_price * threshold_percent / 100):
-            return True, "STOPLOSS", stop_loss_price
-        else:
-            return False, None, None
-
-    def when_to_buy(self,start,end,data_dict,tracked_high):
-        ist = pytz.timezone("Asia/Kolkata")
-        now = datetime.now(ist).time()
-
-
-
-        while start <= now <= end:
-            result = self.extract_l1_ohlc(data_dict)
-            if result:
-                cp,ltp,ltt = result.values()
-                print(f"📊 L1 HIGH: ₹{ltp} | L1 CURRENT: ₹{cp}")
-
-                # Pass to when_to_buy - using L1 data
-                tracked_high = self.highMarketValue(
-                    tracked_high,
-                    ltp
-                )
-                print(tracked_high,'this is tracked high')
-                price=tracked_high if tracked_high else ltp
-                print(f'price {price}')
-
-                # ✅ Update time on each iteration to check if we're still in window
-                now = datetime.now(ist).time()
-                print(f'⏰ Current time: {now} | Window: {start} - {end}')
-                return tracked_high
-            else:
-                return 0
+            return
 
     def get_token(self):
         pass
 
-    def get_thursday_date(self):
+    def get_thursday_date(self, weekday=3, exchange='BSE'):
         """
-        Checks if today is Thursday and returns today's date if it is,
-        otherwise returns the date of the next coming Thursday.
-        If the Thursday (or subsequent days going back) is a holiday,
-        it keeps going back until it finds a non-holiday day.
+        Returns the date of the given weekday: today if today matches, else the next occurrence.
+        If that day (or a day reached by going back) is a holiday, goes back until a non-holiday day.
+
+        Args:
+            weekday: int 0-6 (Monday=0, Tuesday=1, ..., Sunday=6) or str e.g. 'thursday', 'Thursday'.
+                     Default 3 (Thursday).
 
         Returns:
-        str: The date of the relevant Thursday (or earlier non-holiday day) in 'YYYY-MM-DD' format.
+            str: The date in 'YYYY-MM-DD' format.
         """
-       
+        # Normalize weekday to int 0-6
+        if isinstance(weekday, str):
+            names = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+            try:
+                weekday = names.index(weekday.lower().strip())
+            except ValueError:
+                raise ValueError(f"weekday must be 0-6 or one of {names}")
+        if not isinstance(weekday, int) or not 0 <= weekday <= 6:
+            raise ValueError("weekday must be int 0-6 (Monday=0, Sunday=6) or a day name string")
+
         today = date.today()
-        # Weekday Monday is 0 and Sunday is 6. Thursday is 3.
-        days_until_thursday = (3 - today.weekday() + 7) % 7
-
-        if days_until_thursday == 0:
-            # Today is Thursday
-            thursday_date = today
+        # Days until target weekday (0 = today, 1-6 = next occurrence)
+        days_until_target = (weekday - today.weekday() + 7) % 7
+        if days_until_target == 0:
+            target_date = today
         else:
-            # Find the next Thursday
-            thursday_date = today + timedelta(days=days_until_thursday)
+            target_date = today + timedelta(days=days_until_target)
 
-        # Keep going back until we find a non-holiday day (max 3 days back, up to Monday)
+        # Keep going back until we find a non-holiday day (max 3 days back)
         days_back = 0
         max_days_back = 3
-        
+
         while days_back < max_days_back:
             try:
-                response_data = self.market_holidays_and_timings_api.get_holiday(thursday_date.strftime('%Y-%m-%d'))
+                response_data = self.market_holidays_and_timings_api.get_holiday(target_date.strftime('%Y-%m-%d'))
                 if response_data.data:
                     closed_exchanges = response_data.data[0].closed_exchanges
                 else:
                     closed_exchanges = []
-                
-                if 'BSE' not in closed_exchanges:
-                    # Found a non-holiday day, break out of loop
+
+                if exchange not in closed_exchanges:
                     break
                 else:
-                    # It's a holiday, go back one more day
-                    thursday_date = thursday_date + timedelta(days=-1)
+                    target_date = target_date + timedelta(days=-1)
                     days_back += 1
             except Exception as e:
-                # If API call fails, return the current date
-                print(f"Error checking holiday for {thursday_date}: {e}")
+                print(f"Error checking holiday for {target_date}: {e}")
                 break
 
-        return thursday_date.strftime('%Y-%m-%d')
+        return target_date.strftime('%Y-%m-%d')
     
 
-    def get_option_contracts_response(self):
+    def get_option_contracts_response(self, expiry_date):
         """Get option contracts response. Handles errors gracefully."""
         
         try:
@@ -460,11 +370,17 @@ class AlgoKM:
                 upstox_client.ApiClient(self.configuration)
             )
                 
+
+            param = {
+                'expiry_date': expiry_date
+            }
+
             # Get option contracts for the expiry date
             self.option_contracts = options_instance.get_option_contracts(
                 instrument_key=self.instrument_key,
-                expiry_date=self.get_thursday_date()
+                **param
             )
+            # print('this is the option_contracts', self.option_contracts)
         except upstox_client.rest.ApiException as e:
             print(f"❌ Error fetching option contracts (API Exception): {e.status} - {e.reason}")
             if e.body:
@@ -484,7 +400,7 @@ class AlgoKM:
             self.option_contracts = None
         
 
-    def get_option_contracts(self, sensex_price, instrument_key=None):
+    def get_option_contracts(self, sensex_price, instrument_key=None,expiry_date=None):
         """
         Get option contracts (CE and PE) for given expiry and strike price.
         
@@ -496,18 +412,33 @@ class AlgoKM:
         Returns:
             tuple: (ce_instrument_key, pe_instrument_key)
         """
+
+        print('hello inside the get_option_contracts')
         if instrument_key is None:
             instrument_key = self.instrument_key
+
+        rounded_strike = {
+            'BSE': round(sensex_price / 100) * 100,
+            'NSE': round(sensex_price / 50) * 50
+        }
         
         try:
             # Round price to nearest 100 for strike selection
-            rounded_strike = round(sensex_price / 100) * 100
-            
+            rounded_strike = rounded_strike['NSE']
+
+            print('sensex  price', sensex_price)
+            print('rounded_strike', rounded_strike)
+            print('instrument_key', instrument_key)
+            print('expiry_date', expiry_date)
             
             if not self.option_contracts:
-                self.get_option_contracts_response()
+                self.get_option_contracts_response(expiry_date=expiry_date)
+
+            # print('this is the option_contracts', self.option_contracts)
+
+
             
-            # Initialize OptionsApi with configuration
+            # # Initialize OptionsApi with configuration
            
             # Convert response to dict if needed
             if hasattr(self.option_contracts, 'to_dict'):
@@ -518,7 +449,7 @@ class AlgoKM:
             # Extract data
             data = response_dict.get('data', [])
             if not data:
-                raise ValueError(f"No option contracts found for {instrument_key} on {self.get_thursday_date()}")
+                raise ValueError(f"No option contracts found for {instrument_key} on {self.get_thursday_date(weekday=weekday, exchange=exchange)}")
             
             # Create DataFrame
             df = pd.DataFrame(data)
@@ -559,8 +490,8 @@ class AlgoKM:
         if target_start <= input_time <= target_end:
             rounded_ltp = round(ltp / 100) * 100
             
-            expiry_date = self.get_thursday_date()
-            return self.get_option_contracts(expiry_date, ltp)
+            expiry_date = self.get_thursday_date(weekday=1, exchange='BSE')
+            return self.get_option_contracts(ltp, instrument_key=self.instrument_key,exchange='BSE',weekday=1)
         # add the logic later
 
     def get_instrument_token(self):
@@ -658,7 +589,7 @@ class AlgoKM:
 
     async def normal_order_execution(self, websocket, buy_price, quantity):
 
-        self.buy_price = buy_price +  (buy_price * self.buy_percentage) / 100
+        self.buy_price = buy_price
 
         self.quantity = quantity
      
@@ -688,18 +619,20 @@ class AlgoKM:
                 decoded_data = decode_protobuf(message)
                 data_dict = MessageToDict(decoded_data)
                 is_data = self.instrument_key == list(data_dict.get('feeds').keys())[0]
-               
+
 
                 if is_data:
                     result = self.extract_l1_ohlc(data_dict)
                     if result and result.get('ltp', 0) > 0:
                         ltp = result['ltp']
+                        print('this is ltp', ltp)
                         if ltp > self.buy_price and not entry_taken:
                             self.order_id = self.place_normal_order(
                                 quantity=self.quantity,
-                                buy_price=self.buy_price,
+                                buy_price=ltp,
                                 instrument_key=self.instrument_key
                             ).data.order_ids[0]
+                            self.ltp_order_price = ltp
                             entry_taken = True
                             print(f"✅ Normal order placed. Order ID: {self.order_id}")
                             break        
@@ -798,7 +731,10 @@ class AlgoKM:
                 try:
                     order_data = self.portfolio_update_queue.get(timeout=1.0)
                     result = await self.process_portfolio_update(order_data)
-                    return result
+                    print('this is result',result)
+                    # Only return when we have a terminal status (complete/rejected); keep waiting for "open" etc.
+                    if result is not None:
+                        return result
                 except queue.Empty:
                     # Timeout is expected, continue monitoring
                     continue
@@ -844,7 +780,7 @@ class AlgoKM:
             return 'ERROR'
 
 
-   
+    @retry(stop_max_attempt_number=3, wait_fixed=1000)
     async def track_stop_loss_and_target(self, websocket):
         """
         Track highest prices for CE and PE options between 9:17-9:30.
@@ -869,46 +805,49 @@ class AlgoKM:
         await websocket.send(binary_data)
         
     
-        stop_loss_price = self.buy_price - (self.buy_price * self.stop_loss_percentage / 100)
-        target_price = self.buy_price + (self.buy_price * self.target_percentage / 100)
+        stop_loss_price = self.ltp_order_price - (self.ltp_order_price * self.stop_loss_percentage / 100)
+        target_price = self.ltp_order_price + (self.ltp_order_price * self.target_percentage / 100)
 
+        while True:
+            try:
+                # Receive message with timeout
+                message = await asyncio.wait_for(websocket.recv(), timeout=1.0)
+                decoded_data = decode_protobuf(message)
+                data_dict = MessageToDict(decoded_data)
 
-        try:    
-            # Receive message with timeout
-            message = await asyncio.wait_for(websocket.recv(), timeout=1.0)
-            decoded_data = decode_protobuf(message)
-            data_dict = MessageToDict(decoded_data)
-            
-            # Extract prices for CE
-            if 'feeds' in data_dict and self.instrument_key in data_dict['feeds']:
-                
-                data_ik = self.extract_l1_ohlc(data_dict)
-                ltp = data_ik.get('ltp', 0)
+                # Extract prices for CE
+                if 'feeds' in data_dict and self.instrument_key in data_dict['feeds']:
+                    data_ik = self.extract_l1_ohlc(data_dict)
+                    ltp = data_ik.get('ltp', 0)
 
-                if ltp <= stop_loss_price:
-                    response = self.sellStock(
-                        quantity=self.quantity,
-                        sell_price=stop_loss_price
-                    ).data.order_ids[0]
+                    print('this is ltp', ltp)
 
-                    print(f"✅ Stop loss price {stop_loss_price} reached")
-                    return response, 'STOP_LOSS'
-                if ltp >= target_price:
-                    response = self.sellStock(
-                        quantity=self.quantity,
-                        sell_price=target_price
-                    ).data.order_ids[0]
-                    print(f"✅ Target price {target_price} reached")
-                    return response, 'TARGET'
+                    if ltp <= stop_loss_price:
+                        print('this is stop_loss_price', stop_loss_price)
+                        response = self.sellStock(
+                            quantity=self.quantity,
+                            sell_price=stop_loss_price
+                        ).data.order_ids[0]
+                        print('this is the response', response)
+                        print(f"✅ Stop loss price {stop_loss_price} reached")
+                        return 'STOP_LOSS'
 
-        except asyncio.TimeoutError:
-            # Timeout is expected, continue tracking
-            pass
-        except Exception as e:
-            print(f"Error tracking prices: {e}")
-            pass
-    
-        return None, 'Pending'
+                    if ltp >= target_price:
+                        print('this is target_price', target_price)
+                        response = self.sellStock(
+                            quantity=self.quantity,
+                            sell_price=target_price
+                        ).data.order_ids[0]
+                        print('this is the response', response)
+                        print(f"✅ Target price {target_price} reached")
+                        return 'TARGET'
+
+            except asyncio.TimeoutError:
+                # No message in 1s – keep monitoring, loop again
+                continue
+            except Exception as e:
+                print(f"Error tracking prices: {e}")
+                continue
     
     
 
@@ -930,7 +869,7 @@ class AlgoKM:
             if entry_taken:
                 status = await self.monitor_portfolio_updates()
                 if status == 'COMPLETED':
-                    response, status = await self.track_stop_loss_and_target(websocket)
+                    status = await self.track_stop_loss_and_target(websocket)
                     if status == 'TARGET':
                         print(f"✅ {status} order placed")
                         return 
@@ -1004,7 +943,7 @@ def verify_access_token(access_token):
         
     
 # Test code - only run when script is executed directly, not when imported
-
+# NSE_INDEX|Nifty 50
 
 # data = {'feeds': {'BSE_FO|1127928': {'fullFeed': {'marketFF': {'ltpc': {'ltp': 255.0, 'ltt': '1763529366611', 'ltq': '40', 'cp': 386.2}, 'marketLevel': {'bidAskQuote': [{'bidQ': '80', 'bidP': 254.6, 'askQ': '60', 'askP': 254.9}, {'bidQ': '20', 'bidP': 254.55, 'askQ': '40', 'askP': 255.0}, {'bidQ': '20', 'bidP': 254.5, 'askQ': '1080', 'askP': 255.05}, {'bidQ': '160', 'bidP': 254.4, 'askQ': '340', 'askP': 255.1}, {'bidQ': '340', 'bidP': 254.35, 'askQ': '340', 'askP': 255.15}]}, 'optionGreeks': {'delta': -0.4796, 'theta': -112.3274, 'gamma': 0.0006, 'vega': 19.3795, 'rho': -1.3444}, 'marketOHLC': {'ohlc': [{'interval': '1d', 'open': 385.95, 'high': 488.35, 'low': 235.6, 'close': 255.0, 'vol': '9027620', 'ts': '1763490600000'}, {'interval': 'I1', 'open': 260.5, 'high': 261.35, 'low': 255.4, 'close': 255.8, 'vol': '142360', 'ts': '1763529300000'}]}, 'atp': 296.86, 'vtt': '9027620', 'oi': 1416020.0, 'iv': 0.1387786865234375, 'tbq': 188240.0, 'tsq': 263140.0}}, 'requestMode': 'full_d5'}, 'BSE_FO|1128472': {'fullFeed': {'marketFF': {'ltpc': {'ltp': 228.1, 'ltt': '1763529365954', 'ltq': '40', 'cp': 239.35}, 'marketLevel': {'bidAskQuote': [{'bidQ': '160', 'bidP': 227.8, 'askQ': '20', 'askP': 228.3}, {'bidQ': '80', 'bidP': 227.75, 'askQ': '600', 'askP': 228.35}, {'bidQ': '220', 'bidP': 227.7, 'askQ': '160', 'askP': 228.4}, {'bidQ': '260', 'bidP': 227.65, 'askQ': '220', 'askP': 228.45}, {'bidQ': '680', 'bidP': 227.6, 'askQ': '180', 'askP': 228.5}]}, 'optionGreeks': {'delta': 0.5234, 'theta': -88.2644, 'gamma': 0.0008, 'vega': 19.3711, 'rho': 1.4507}, 'marketOHLC': {'ohlc': [{'interval': '1d', 'open': 239.2, 'high': 249.05, 'low': 125.75, 'close': 228.1, 'vol': '18783540', 'ts': '1763490600000'}, {'interval': 'I1', 'open': 219.35, 'high': 226.75, 'low': 219.35, 'close': 226.75, 'vol': '126180', 'ts': '1763529300000'}]}, 'atp': 191.32, 'vtt': '18783540', 'oi': 1438320.0, 'iv': 0.109100341796875, 'tbq': 238620.0, 'tsq': 226160.0}}, 'requestMode': 'full_d5'}}, 'currentTs': '1763529366451'}
 # dat = am.extract_i1_ohlc(data,'BSE_FO|1127928')
@@ -1024,7 +963,7 @@ def verify_access_token(access_token):
 # id = am.get_gtt_order_details('GTT-C25091200197924')
 # print(id)
 
+# am = AlgoKM(instrument_key='NSE_INDEX|Nifty 50',access_token=access_token,tick_size=True,buy_percentage=0,stop_loss_percentage=0.08,target_percentage=0.08,product='I',validity='DAY',order_type='LIMIT',weekday=1,exchange='NSE')  
 
-
-
-                
+# data = am.get_option_contracts_response(expiry_date='2026-03-10')
+# print('this is the data of the option contracts', data)

@@ -28,6 +28,7 @@ import threading
 import queue
 import upstox_client
 from retrying import retry
+from db import get_user
 
 
 load_dotenv()
@@ -72,14 +73,16 @@ class TradingStrategy:
         self.ist = pytz.timezone("Asia/Kolkata")
         
         # Sensex instrument key
-        self.sensex_instrument_key = 'BSE_INDEX|SENSEX'
+        self.sensex_instrument_key = 'NSE_INDEX|Nifty 50'
         self.tick_size = tick_size
         
         # Initialize AlogKM instance for Sensex
         self.sensex_trader = AlgoKM(
             access_token=access_token,
             instrument_key=self.sensex_instrument_key,
-            tick_size=self.tick_size
+            tick_size=self.tick_size,
+            weekday=1,
+            exchange='NSE'
         )
         
         # Pre-fetch option contracts in background for faster lookup later
@@ -110,11 +113,11 @@ class TradingStrategy:
         if at_the_money_time is None:
             at_the_money_time = time_class(9, 17)  # 9:17 AM
         if start_time is None:
-            start_time = time_class(11,56)  # 9:17 AM
+            start_time = time_class(9,17)  # 9:17 AM
         if end_time is None:
-            end_time = time_class(12, 29)    # 9:30 AM
+            end_time = time_class(9, 30)    # 9:30 AM
         if exit_time is None:
-            exit_time = time_class(22, 30)   # 3:30 PM
+            exit_time = time_class(15, 30)   # 3:30 PM
 
    
         
@@ -122,6 +125,10 @@ class TradingStrategy:
         self.start_time = start_time
         self.end_time = end_time
         self.exit_time = exit_time
+
+
+        # Users loaded in execute_strategy() via await get_user()
+        self.users = None
        
 
         # Portfolio streamer for order tracking
@@ -129,24 +136,24 @@ class TradingStrategy:
         self.portfolio_thread = None
         self.portfolio_update_queue = queue.Queue()
     
-    def _pre_fetch_options(self):
-        """Pre-fetch option contracts in background thread for faster lookup."""
-        def fetch_in_background():
-            try:
-                expiry_date = self.sensex_trader.get_thursday_date()
-                print(f"🔄 Pre-fetching option contracts for expiry {expiry_date} in background...")
-                self.sensex_trader.pre_fetch_option_contracts(
-                    expiry_date=expiry_date,
-                    instrument_key=self.sensex_instrument_key
-                )
-            except Exception as e:
-                print(f"⚠️ Warning: Could not pre-fetch option contracts: {e}")
-                print("   Will fetch when needed (may be slower)")
+    # def _pre_fetch_options(self):
+    #     """Pre-fetch option contracts in background thread for faster lookup."""
+    #     def fetch_in_background():
+    #         try:
+    #             expiry_date = self.sensex_trader.get_thursday_date()
+    #             print(f"🔄 Pre-fetching option contracts for expiry {expiry_date} in background...")
+    #             self.sensex_trader.pre_fetch_option_contracts(
+    #                 expiry_date=expiry_date,
+    #                 instrument_key=self.sensex_instrument_key
+    #             )
+    #         except Exception as e:
+    #             print(f"⚠️ Warning: Could not pre-fetch option contracts: {e}")
+    #             print("   Will fetch when needed (may be slower)")
         
-        # Start background thread
-        fetch_thread = threading.Thread(target=fetch_in_background, daemon=True)
-        fetch_thread.start()
-        print("✅ Option contracts pre-fetch started in background")
+    #     # Start background thread
+    #     fetch_thread = threading.Thread(target=fetch_in_background, daemon=True)
+    #     fetch_thread.start()
+    #     print("✅ Option contracts pre-fetch started in background")
         
     async def wait_until_time(self, target_time, silent=False,):
         """
@@ -473,7 +480,7 @@ class TradingStrategy:
         
         if current_time_only > self.at_the_money_time:
             print(f"⏳ The at-the-money time ({self.at_the_money_time.strftime('%H:%M')}) has already passed. Fetching Sensex price from historical data...")
-            sensex_price = self.sensex_trader.price_at_917(self.at_the_money_time)
+            sensex_price = self.sensex_trader.price_at_917(insturment_key=self.sensex_instrument_key, time=self.at_the_money_time)
             if not sensex_price:
                 print(f"⚠️ Sensex price is not available at {self.at_the_money_time.strftime('%H:%M')}, waiting for 30 seconds")
                 time_module.sleep(30)
@@ -535,18 +542,20 @@ class TradingStrategy:
         print(f"🔍 Getting option contracts for Sensex price: ₹{sensex_price}")
         
         # Get Thursday expiry date
-        expiry_date = self.sensex_trader.get_thursday_date()
+        expiry_date = self.sensex_trader.get_thursday_date(weekday=1, exchange='NSE')
         print(f"📅 Expiry date: {expiry_date}")
         
-        # Get option contracts
+        # # Get option contracts
         self.ce_instrument_key, self.pe_instrument_key = self.sensex_trader.get_option_contracts(
             sensex_price=sensex_price,
+            expiry_date=expiry_date,
+            instrument_key=self.sensex_instrument_key
         )
         
         
         
-        print(f"✅ CE Instrument Key: {self.ce_instrument_key}")
-        print(f"✅ PE Instrument Key: {self.pe_instrument_key}")
+        # print(f"✅ CE Instrument Key: {self.ce_instrument_key}")
+        # print(f"✅ PE Instrument Key: {self.pe_instrument_key}")
         
         return self.ce_instrument_key, self.pe_instrument_key
     
@@ -657,14 +666,51 @@ class TradingStrategy:
         self.pe_high_price = high_prices[self.pe_instrument_key]
         self.ce_high_price = high_prices[self.ce_instrument_key]
                 
-    async def normal_order_execution(self, websocket, ce_buy_price, pe_buy_price, ce_intrument_ke=None, pe_intrument_key=None):
+    def order_initialization(self, ce_instrument_key=None, pe_instrument_key=None):
 
-        if ce_intrument_key is None:
-            ce_intrument_key = self.ce_instrument_key
-        if pe_intrument_key is None:
-            pe_intrument_key = self.pe_instrument_key
+        if ce_instrument_key is None:
+            ce_instrument_key = self.ce_instrument_key
+        if pe_instrument_key is None:
+            pe_instrument_key = self.pe_instrument_key
 
-        
+        traders = {}
+
+        for user in self.users:
+            user_api_key = user.apiKey
+            ce_trader = AlgoKM(
+                access_token=user_api_key,
+                instrument_key=ce_instrument_key,
+                tick_size=self.tick_size
+            )
+            pe_trader = AlgoKM(
+                access_token=user_api_key,
+                instrument_key=pe_instrument_key,
+                tick_size=self.tick_size
+            )
+
+            traders[user.name] = {
+                'ce_trader': ce_trader,
+                'pe_trader': pe_trader
+            }
+
+            print(f"✅ {user.name} traders setup complete")
+
+        return traders
+
+    async def order_execution(self,websocket, traders, ce_buy_price, pe_buy_price, quantity):
+
+
+        for user in traders:
+            ce_trader = traders[user.name]['ce_trader']
+            pe_trader = traders[user.name]['pe_trader']
+
+            print(f"✅ {ce_trader} order placed")
+            print(f"✅ {pe_trader} order placed")
+
+            await ce_trader.normal_gtt_execution(websocket, ce_buy_price, quantity)
+            await pe_trader.normal_gtt_execution(websocket, pe_buy_price, quantity)
+
+            print(f"✅ {user} order placed")
 
  
     
@@ -676,7 +722,13 @@ class TradingStrategy:
         print("=" * 60)
         print("🚀 Starting Trading Strategy")
         print("=" * 60)
-        
+
+        # Load users from database (async)
+        self.users = await get_user()
+        if not self.users:
+            print("❌ No users found in database. Exiting.")
+            return
+
         # Setup portfolio streamer for order tracking
         self.setup_portfolio_streamer()
         
@@ -704,8 +756,14 @@ class TradingStrategy:
 
                 await self.track_high_price_for_both(websocket)
 
-                # custom Gtt order here
-                await self.normal_order_execution(websocket, self.ce_high_price, self.pe_high_price)   
+                # traders = self.order_initialization(ce_instrument_key=self.ce_instrument_key,
+                #                                     pe_instrument_key=self.pe_instrument_key)
+
+                # await self.order_execution(websocket, traders, 
+                #                             ce_buy_price=self.ce_high_price,
+                #                             pe_buy_price=self.pe_high_price,
+                #                             quantity=self.quantity)
+
              
         except Exception as e:
             print(f"❌ Error in strategy execution: {e}")
@@ -723,7 +781,8 @@ def main():
         print("❌ Error: access_token not found in environment variables")
         return
     
-    strategy = TradingStrategy(access_token=my_access_token, quantity=20,at_the_money_time=time_class(9,17),tick_size=True)
+    strategy = TradingStrategy(access_token=my_access_token, 
+     quantity=20,at_the_money_time=time_class(9,17),tick_size=True)
     asyncio.run(strategy.execute_strategy())
     # strategy.run_portfolio_streamer()
     # strategy = TradingStrategy(access_token=my_access_token, quantity=1)
