@@ -73,8 +73,12 @@ class TradingStrategy:
         self.ist = pytz.timezone("Asia/Kolkata")
         
         # Sensex instrument key
-        self.sensex_instrument_key = 'NSE_INDEX|Nifty 50'
+        # self.sensex_instrument_key = 'NSE_INDEX|Nifty 50'
+        self.sensex_instrument_key = 'BSE_INDEX|SENSEX'
+
         self.tick_size = tick_size
+
+        
         
         # Initialize AlogKM instance for Sensex
         self.sensex_trader = AlgoKM(
@@ -82,7 +86,7 @@ class TradingStrategy:
             instrument_key=self.sensex_instrument_key,
             tick_size=self.tick_size,
             weekday=1,
-            exchange='NSE'
+            exchange='BSE'
         )
         
         # Pre-fetch option contracts in background for faster lookup later
@@ -111,11 +115,11 @@ class TradingStrategy:
         self.pe_normal_order_id = None
         # Time windows - use provided times or defaults
         if at_the_money_time is None:
-            at_the_money_time = time_class(9, 17)  # 9:17 AM
+            at_the_money_time = time_class(11,30)  # 9:17 AM
         if start_time is None:
-            start_time = time_class(9,17)  # 9:17 AM
+            start_time = time_class(11,30)  # 9:17 AM
         if end_time is None:
-            end_time = time_class(9, 30)    # 9:30 AM
+            end_time = time_class(12, 5)    # 9:30 AM
         if exit_time is None:
             exit_time = time_class(15, 30)   # 3:30 PM
 
@@ -542,7 +546,7 @@ class TradingStrategy:
         print(f"🔍 Getting option contracts for Sensex price: ₹{sensex_price}")
         
         # Get Thursday expiry date
-        expiry_date = self.sensex_trader.get_thursday_date(weekday=1, exchange='NSE')
+        expiry_date = self.sensex_trader.get_thursday_date(weekday=3, exchange='BSE')
         print(f"📅 Expiry date: {expiry_date}")
         
         # # Get option contracts
@@ -676,22 +680,36 @@ class TradingStrategy:
         traders = {}
 
         for user in self.users:
-            user_api_key = user.apiKey
+            user_api_key = user.apitoken
             ce_trader = AlgoKM(
                 access_token=user_api_key,
                 instrument_key=ce_instrument_key,
-                tick_size=self.tick_size
+                tick_size=self.tick_size,
+                buy_percentage=0,
+                stop_loss_percentage=5,
+                target_percentage=12.5,
+                product='I',
+                validity='DAY',
+                order_type='LIMIT', 
             )
             pe_trader = AlgoKM(
                 access_token=user_api_key,
                 instrument_key=pe_instrument_key,
-                tick_size=self.tick_size
+                tick_size=self.tick_size,
+                buy_percentage=0,
+                stop_loss_percentage=5,
+                target_percentage=12.5,
+                product='I',
+                validity='DAY',
+                order_type='LIMIT', 
             )
 
             traders[user.name] = {
                 'ce_trader': ce_trader,
                 'pe_trader': pe_trader
             }
+
+            print(traders,'this is traders')
 
             print(f"✅ {user.name} traders setup complete")
 
@@ -701,16 +719,14 @@ class TradingStrategy:
 
 
         for user in traders:
-            ce_trader = traders[user.name]['ce_trader']
-            pe_trader = traders[user.name]['pe_trader']
+            ce_trader = traders[user]['ce_trader']
+            pe_trader = traders[user]['pe_trader']
 
-            print(f"✅ {ce_trader} order placed")
-            print(f"✅ {pe_trader} order placed")
+            # Run CE and PE traders concurrently (simultaneously)
+            # await ce_trader.normal_gtt_execution(websocket, ce_buy_price, quantity, trade = 'ce')
+            await pe_trader.normal_gtt_execution(websocket, pe_buy_price, quantity, trade = 'pe')
 
-            await ce_trader.normal_gtt_execution(websocket, ce_buy_price, quantity)
-            await pe_trader.normal_gtt_execution(websocket, pe_buy_price, quantity)
-
-            print(f"✅ {user} order placed")
+            print(f"✅ {user} CE & PE orders placed")
 
  
     
@@ -756,13 +772,13 @@ class TradingStrategy:
 
                 await self.track_high_price_for_both(websocket)
 
-                # traders = self.order_initialization(ce_instrument_key=self.ce_instrument_key,
-                #                                     pe_instrument_key=self.pe_instrument_key)
+                traders = self.order_initialization(ce_instrument_key=self.ce_instrument_key,
+                                                    pe_instrument_key=self.pe_instrument_key)
 
-                # await self.order_execution(websocket, traders, 
-                #                             ce_buy_price=self.ce_high_price,
-                #                             pe_buy_price=self.pe_high_price,
-                #                             quantity=self.quantity)
+                await self.order_execution(websocket, traders, 
+                                            ce_buy_price=self.ce_high_price,
+                                            pe_buy_price=self.pe_high_price,
+                                            quantity=self.quantity)
 
              
         except Exception as e:
@@ -782,7 +798,7 @@ def main():
         return
     
     strategy = TradingStrategy(access_token=my_access_token, 
-     quantity=20,at_the_money_time=time_class(9,17),tick_size=True)
+     quantity=20,tick_size=True)
     asyncio.run(strategy.execute_strategy())
     # strategy.run_portfolio_streamer()
     # strategy = TradingStrategy(access_token=my_access_token, quantity=1)

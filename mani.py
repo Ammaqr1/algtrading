@@ -417,6 +417,11 @@ class AlgoKM:
         if instrument_key is None:
             instrument_key = self.instrument_key
 
+        if instrument_key.startswith('BS'):
+            exchange = 'BSE'
+        else:
+            exchange = 'NSE'
+
         rounded_strike = {
             'BSE': round(sensex_price / 100) * 100,
             'NSE': round(sensex_price / 50) * 50
@@ -424,7 +429,7 @@ class AlgoKM:
         
         try:
             # Round price to nearest 100 for strike selection
-            rounded_strike = rounded_strike['NSE']
+            rounded_strike = rounded_strike[exchange]
 
             print('sensex  price', sensex_price)
             print('rounded_strike', rounded_strike)
@@ -587,7 +592,7 @@ class AlgoKM:
         return response
 
 
-    async def normal_order_execution(self, websocket, buy_price, quantity):
+    async def normal_order_execution(self, websocket, buy_price, quantity, trade = None):
 
         self.buy_price = buy_price
 
@@ -618,23 +623,35 @@ class AlgoKM:
                 message = await asyncio.wait_for(websocket.recv(), timeout=5.0)
                 decoded_data = decode_protobuf(message)
                 data_dict = MessageToDict(decoded_data)
-                is_data = self.instrument_key == list(data_dict.get('feeds').keys())[0]
-
+                feeds = data_dict.get('feeds') if data_dict else None
+                if not feeds or not isinstance(feeds, dict):
+                    continue
+                feed_keys = list(feeds.keys())
+                if not feed_keys:
+                    continue
+                is_data = self.instrument_key == feed_keys[0]
 
                 if is_data:
                     result = self.extract_l1_ohlc(data_dict)
                     if result and result.get('ltp', 0) > 0:
                         ltp = result['ltp']
-                        print('this is ltp', ltp)
+                        print(f'{trade} ltp', ltp)
                         if ltp > self.buy_price and not entry_taken:
-                            self.order_id = self.place_normal_order(
-                                quantity=self.quantity,
-                                buy_price=ltp,
-                                instrument_key=self.instrument_key
-                            ).data.order_ids[0]
+                            # self.order_id = self.place_normal_order(
+                            #     quantity=self.quantity,
+                            #     buy_price=ltp,
+                            #     instrument_key=self.instrument_key
+                            # ).data.order_ids[0]
+                            text = "Order Placed"
+                            width = len(text) + 6
+                            print("=" * width)
+                            print("= " + " " * (width-4) + " =")
+                            print(f"=  {text}  =")
+                            print("= " + " " * (width-4) + " =")
+                            print("=" * width)
                             self.ltp_order_price = ltp
                             entry_taken = True
-                            print(f"✅ Normal order placed. Order ID: {self.order_id}")
+                            # print(f"✅ Normal order placed. Order ID: {self.order_id}")
                             break        
                   
             except asyncio.TimeoutError:
@@ -824,22 +841,38 @@ class AlgoKM:
 
                     if ltp <= stop_loss_price:
                         print('this is stop_loss_price', stop_loss_price)
-                        response = self.sellStock(
-                            quantity=self.quantity,
-                            sell_price=stop_loss_price
-                        ).data.order_ids[0]
-                        print('this is the response', response)
-                        print(f"✅ Stop loss price {stop_loss_price} reached")
+                        # response = self.sellStock(
+                        #     quantity=self.quantity,
+                        #     sell_price=stop_loss_price
+                        # ).data.order_ids[0]
+                        # print('this is the response', response)
+                        # print(f"✅ Stop loss price {stop_loss_price} reached")
+                        text = "Stop Loss Price Reached"
+
+                        width = len(text) + 6
+                        print("=" * width)
+                        print("= " + " " * (width-4) + " =")
+                        print(f"=  {text}  =")
+                        print("= " + " " * (width-4) + " =")
+                        print("=" * width)
                         return 'STOP_LOSS'
 
                     if ltp >= target_price:
                         print('this is target_price', target_price)
-                        response = self.sellStock(
-                            quantity=self.quantity,
-                            sell_price=target_price
-                        ).data.order_ids[0]
-                        print('this is the response', response)
-                        print(f"✅ Target price {target_price} reached")
+                        # response = self.sellStock(
+                        #     quantity=self.quantity,
+                        #     sell_price=target_price
+                        # ).data.order_ids[0]
+                        # print('this is the response', response)
+                        # print(f"✅ Target price {target_price} reached")
+                        text = "Target Price Reached"
+
+                        width = len(text) + 6
+                        print("=" * width)
+                        print("= " + " " * (width-4) + " =")
+                        print(f"=  {text}  =")
+                        print("= " + " " * (width-4) + " =")
+                        print("=" * width)
                         return 'TARGET'
 
             except asyncio.TimeoutError:
@@ -852,7 +885,7 @@ class AlgoKM:
     
 
 
-    async def normal_gtt_execution(self,websocket,buy_price,quantity):
+    async def normal_gtt_execution(self,websocket,buy_price,quantity,trade = None):
         """Main strategy execution function."""
         print("=" * 60)
         print("🚀 Starting Trading Strategy")
@@ -864,7 +897,7 @@ class AlgoKM:
         
         try:
 
-            entry_taken = await self.normal_order_execution(websocket,buy_price=buy_price,quantity=quantity)
+            entry_taken = await self.normal_order_execution(websocket,buy_price=buy_price,quantity=quantity,trade=trade)
 
             if entry_taken:
                 status = await self.monitor_portfolio_updates()
